@@ -40,10 +40,50 @@ st.markdown("""
       --muted:#8fa3b8;--text:#cfdae6;--strong:#eef4fb;--brand:#38bdf8;}
 html,body,[class*="css"],.stApp{font-family:'Inter',system-ui,sans-serif;}
 .stApp{background:var(--ink);}
+/* Hide only the toolbar/footer; keep the Streamlit header available. */
 [data-testid="stToolbar"],footer{visibility:hidden;}
-[data-testid="stHeader"]{background:transparent;}
+[data-testid="stHeader"]{
+  display:flex !important;
+  visibility:visible !important;
+  opacity:1 !important;
+  min-height:3rem !important;
+  background:transparent !important;
+  z-index:999998 !important;
+}
 .block-container{padding-top:1.1rem;padding-bottom:1rem;max-width:1600px;}
-[data-testid="stSidebar"]{background:var(--panel);border-right:1px solid var(--border);}
+
+/* Sidebar itself and its expand/collapse controls */
+[data-testid="stSidebar"]{
+  display:block !important;
+  visibility:visible !important;
+  background:var(--panel);
+  border-right:1px solid var(--border);
+}
+[data-testid="stSidebarCollapsedControl"],
+[data-testid="stSidebarCollapseButton"],
+[data-testid="stSidebar"] button[kind="header"]{
+  display:flex !important;
+  visibility:visible !important;
+  opacity:1 !important;
+  pointer-events:auto !important;
+  z-index:1000000 !important;
+}
+[data-testid="stSidebarCollapsedControl"]{
+  position:fixed !important;
+  top:0.5rem !important;
+  left:0.5rem !important;
+}
+[data-testid="stSidebarCollapsedControl"] button,
+[data-testid="stSidebarCollapseButton"] button,
+button[aria-label="Open sidebar"],
+button[aria-label="Close sidebar"],
+button[title="Open sidebar"],
+button[title="Close sidebar"]{
+  display:flex !important;
+  visibility:visible !important;
+  opacity:1 !important;
+  pointer-events:auto !important;
+}
 h1,h2,h3,h4{color:var(--strong);}
 .topbar{display:flex;align-items:center;justify-content:space-between;
   padding:12px 18px;border:1px solid var(--border);border-radius:12px;
@@ -65,38 +105,6 @@ h1,h2,h3,h4{color:var(--strong);}
 .loginwrap{text-align:center;margin-top:6vh;}
 .loginwrap .mk{font-size:34px;font-weight:800;color:var(--strong);}
 .loginwrap .sb{color:var(--muted);margin-bottom:18px;}
-
-/* Keep Streamlit's sidebar expand/collapse controls visible and clickable. */
-[data-testid="stSidebarCollapsedControl"],
-[data-testid="stSidebarCollapseButton"] {
-    display: flex !important;
-    visibility: visible !important;
-    opacity: 1 !important;
-    pointer-events: auto !important;
-    z-index: 1000000 !important;
-}
-
-[data-testid="stSidebarCollapsedControl"] {
-    position: fixed !important;
-    top: 0.5rem !important;
-    left: 0.5rem !important;
-}
-
-[data-testid="stSidebarCollapsedControl"] button,
-[data-testid="stSidebarCollapseButton"] button {
-    visibility: visible !important;
-    opacity: 1 !important;
-    pointer-events: auto !important;
-}
-
-/* Keep the header visible so the sidebar toggle remains accessible. */
-[data-testid="stHeader"] {
-    display: flex !important;
-    visibility: visible !important;
-    opacity: 1 !important;
-    background: transparent !important;
-}
-
 </style>
 """, unsafe_allow_html=True)
 
@@ -132,7 +140,7 @@ if not st.session_state.get("authentication_status"):
             st.error("Incorrect username or password.")
     st.stop()
 
-# Main-page logout remains available even when the sidebar is collapsed.
+# Main-page logout remains available even if the sidebar is collapsed.
 authenticator.logout(
     button_name="Log out",
     location="main",
