@@ -193,7 +193,7 @@ with st.sidebar:
 
     st.divider()
     st.caption(f"Signed in as **{st.session_state.get('name', 'user')}**")
-    authenticator.logout(button_name="Log out", location="sidebar", key="logout_btn")
+    authenticator.logout(button_name="Log out", location="main", key="logout_main_btn")
 
 data = get_data(cache_key, row_margin, detect_buffer, lines)
 cfg = data["cfg"]; cnt = data["counts"]
