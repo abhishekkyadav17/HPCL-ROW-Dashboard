@@ -40,50 +40,11 @@ st.markdown("""
       --muted:#8fa3b8;--text:#cfdae6;--strong:#eef4fb;--brand:#38bdf8;}
 html,body,[class*="css"],.stApp{font-family:'Inter',system-ui,sans-serif;}
 .stApp{background:var(--ink);}
-/* Hide only the toolbar/footer; keep the Streamlit header available. */
-[data-testid="stToolbar"],footer{visibility:hidden;}
-[data-testid="stHeader"]{
-  display:flex !important;
-  visibility:visible !important;
-  opacity:1 !important;
-  min-height:3rem !important;
-  background:transparent !important;
-  z-index:999998 !important;
-}
+[data-testid="stToolbar"]{visibility:visible;}
+footer{visibility:hidden;}
+/* Leave Streamlit header and sidebar controls to Streamlit itself. */
 .block-container{padding-top:1.1rem;padding-bottom:1rem;max-width:1600px;}
-
-/* Sidebar itself and its expand/collapse controls */
-[data-testid="stSidebar"]{
-  display:block !important;
-  visibility:visible !important;
-  background:var(--panel);
-  border-right:1px solid var(--border);
-}
-[data-testid="stSidebarCollapsedControl"],
-[data-testid="stSidebarCollapseButton"],
-[data-testid="stSidebar"] button[kind="header"]{
-  display:flex !important;
-  visibility:visible !important;
-  opacity:1 !important;
-  pointer-events:auto !important;
-  z-index:1000000 !important;
-}
-[data-testid="stSidebarCollapsedControl"]{
-  position:fixed !important;
-  top:0.5rem !important;
-  left:0.5rem !important;
-}
-[data-testid="stSidebarCollapsedControl"] button,
-[data-testid="stSidebarCollapseButton"] button,
-button[aria-label="Open sidebar"],
-button[aria-label="Close sidebar"],
-button[title="Open sidebar"],
-button[title="Close sidebar"]{
-  display:flex !important;
-  visibility:visible !important;
-  opacity:1 !important;
-  pointer-events:auto !important;
-}
+[data-testid="stSidebar"]{background:var(--panel);border-right:1px solid var(--border);}
 h1,h2,h3,h4{color:var(--strong);}
 .topbar{display:flex;align-items:center;justify-content:space-between;
   padding:12px 18px;border:1px solid var(--border);border-radius:12px;
