@@ -9,6 +9,7 @@
 # is seeded so the same corridor regenerates identically across reruns.
 # ═══════════════════════════════════════════════════════════════════════════════
 
+import json
 import math
 import os
 import random
@@ -397,40 +398,36 @@ def build_map(data, cfg=None, basemap="Google Satellite", visible_layers=None,
 
     m = folium.Map(location=center or [data["clat"], data["clon"]],
                    zoom_start=zoom, tiles=None, control_scale=True, zoom_control=True,
-                   max_bounds=True if max_bounds else False,
+                   max_bounds=False,
                    max_bounds_viscosity=1.0)
     if max_bounds:
-    bounds_json = json.dumps(max_bounds)
+        bounds_json = json.dumps(max_bounds)
 
-    m.get_root().script.add_child(Element(f"""
-    (function() {{
-        var map = {m.get_name()};
-        var bounds = L.latLngBounds({bounds_json});
+        # Apply the same geographic viewing limit to whichever basemap is active.
+        # inside=True makes the visible map viewport fit INSIDE max_bounds.
+        m.get_root().script.add_child(Element(f"""
+        (function() {{
+            var map = {m.get_name()};
+            var allowedBounds = L.latLngBounds({bounds_json});
 
-        function restrictMap() {{
-            // Calculate zoom at which the entire viewport fits
-            // INSIDE the permitted geographic boundary.
-            var minZoom = map.getBoundsZoom(bounds, true);
+            function enforceViewingLimit() {{
+                var minimumZoom = map.getBoundsZoom(allowedBounds, true);
+                map.setMinZoom(minimumZoom);
+                map.setMaxBounds(allowedBounds);
+                map.options.maxBoundsViscosity = 1.0;
 
-            map.setMinZoom(minZoom);
-            map.setMaxBounds(bounds);
-            map.options.maxBoundsViscosity = 1.0;
-
-            // Prevent the current zoom from going below the limit.
-            if (map.getZoom() < minZoom) {{
-                map.setZoom(minZoom);
+                if (map.getZoom() < minimumZoom) {{
+                    map.setZoom(minimumZoom, {{animate: false}});
+                }}
+                map.panInsideBounds(allowedBounds, {{animate: false}});
             }}
 
-            // Keep the map centre inside the permitted bounds.
-            map.panInsideBounds(bounds, {{animate: false}});
-        }}
-
-        map.whenReady(function() {{
-            restrictMap();
-            map.on('resize', restrictMap);
-        }});
-    }})();
-    """))
+            map.whenReady(function() {{
+                enforceViewingLimit();
+                map.on('resize', enforceViewingLimit);
+            }});
+        }})();
+        """))
 
     # basemap (only the selected one is added)
     url, attr, subs, mx = BASEMAPS.get(basemap, BASEMAPS["Google Satellite"])
