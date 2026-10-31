@@ -15,10 +15,10 @@ from streamlit_folium import st_folium
 import pipeline as P
 
 # ── brand / asset configuration — edit these for a new client or pipeline ───────
-BRAND = "RoW Sentinel"
+BRAND = "RoW Monitoring Tool"
 SUBTITLE = "Satellite-based pipeline right-of-way monitoring"
 ORG = "BioSky Space Innovations"
-OPERATOR = "HPCL"
+OPERATOR = "Pipeline"
 PRODUCT_LINE = "Petroleum product pipeline"
 PIPELINE_NAME = "Jaipur Segment"
 SCAN_CADENCE_DAYS = 12
@@ -458,9 +458,8 @@ with st.sidebar:
         )
     else:
         sel_epoch, img_opacity, show_change = "(none)", 0.85, False
-        st.caption(
-            "No imagery yet — run `python prep.py` with your Cartosat + GEP files."
-        )
+        # Keep the imagery controls available without displaying setup instructions
+        # in the operator-facing demonstration sidebar.
 
     with st.expander("Corridor geometry"):
         row_margin = st.slider(
@@ -800,7 +799,7 @@ def build_html_report(cfg, rows, operator, pipeline_name, corridor_range):
     )
     generated = date.today().strftime("%d %b %Y")
     return f"""<!DOCTYPE html><html><head><meta charset="utf-8">
-<title>RoW Sentinel — Demonstration Inspection Report</title>
+<title>RoW Monitoring Tool — Demonstration Inspection Report</title>
 <style>
 body{{font-family:Arial,Helvetica,sans-serif;color:#17212c;max-width:1100px;margin:36px auto;padding:0 22px;}}
 h1{{margin-bottom:4px;}} .sub{{color:#526273;margin-top:0;}}
@@ -811,7 +810,7 @@ th{{background:#edf2f6;}}
 .disclaimer{{color:#657586;font-size:11px;margin-top:24px;font-style:italic;line-height:1.5;}}
 @media print{{body{{margin:0;}}}}
 </style></head><body>
-<h1>RoW Sentinel — Pipeline Inspection Report</h1>
+<h1>RoW Monitoring Tool — Pipeline Inspection Report</h1>
 <p class="sub">{html.escape(operator)} · {html.escape(pipeline_name)} · {html.escape(corridor_range)}</p>
 <p class="sub">Generated: {generated} · Current imagery pass: {html.escape(str(cfg.get('SCAN_DATE', '—')))} · Previous pass: {html.escape(str(cfg.get('PREV_SCAN', '—')))}</p>
 <div class="banner"><b>Demonstration report.</b> Records represent candidate detections for workflow evaluation and are not confirmed encroachments or live operational alerts.</div>
@@ -1140,7 +1139,7 @@ with tab_overview:
             st.caption("No historical imagery comparison is available in the current manifest.")
 
     st.divider()
-    st.markdown("**How the RoW Sentinel workflow fits an operator's review process**")
+    st.markdown("**How the RoW Monitoring Tool workflow fits an operator's review process**")
     st.markdown(
         "<div class='workflow-steps'>"
         "<div class='workflow-step'><div class='num'>01 · DETECT</div><div class='name'>Compare imagery</div><div class='desc'>Review repeat satellite acquisitions and flag candidate surface changes along the monitored corridor.</div></div>"
