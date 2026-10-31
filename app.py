@@ -105,16 +105,36 @@ html,body,[class*="css"],.stApp{font-family:'Inter',system-ui,sans-serif;}
 .stApp{background:
   radial-gradient(1200px 500px at 10% -10%, rgba(56,189,248,.05), transparent),
   var(--ink);}
-/* Hide Streamlit-hosted chrome and floating platform controls for client demos. */
+/* Hide Streamlit app chrome and in-app floating controls. */
 [data-testid="stToolbar"],
 [data-testid="stStatusWidget"],
 [data-testid="stAppDeployButton"],
+[data-testid="stDecoration"],
+[data-testid="stHeader"],
+[data-testid="stFooter"],
 .stDeployButton,
-#MainMenu,
-footer,
+.stAppDeployButton,
 .viewerBadge_container__1QSob,
-[data-testid="stDecoration"]{display:none !important; visibility:hidden !important;}
-header{visibility:hidden !important; height:0 !important;}
+.viewerBadge_container,
+#MainMenu,
+#stStatusWidget,
+footer,
+header,
+div[class*="viewerBadge"],
+div[class*="stStatusWidget"],
+div[class*="stDeployButton"],
+button[aria-label*="Deploy"],
+button[title*="Deploy"],
+a[aria-label*="Manage app"],
+button[aria-label*="Manage app"],
+a[title*="Manage app"],
+button[title*="Manage app"]{
+    display:none !important;
+    visibility:hidden !important;
+    opacity:0 !important;
+    pointer-events:none !important;
+}
+header{height:0 !important; min-height:0 !important;}
 
 .block-container{padding-top:1rem;padding-bottom:0.5rem;max-width:1640px;}
 [data-testid="stSidebar"]{background:var(--panel);border-right:1px solid var(--border);}
