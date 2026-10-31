@@ -13,7 +13,6 @@ import math
 import os
 import random
 
-import pyproj
 import folium
 from folium import Element, DivIcon
 from folium.plugins import Fullscreen, MiniMap, MeasureControl, MousePosition
@@ -25,7 +24,7 @@ import pyproj
 DEFAULT_CFG = dict(
     ROW_MARGIN_M=20,        # RoW = this many metres beyond the outer lines
     DETECT_BUFFER_M=50,     # monitoring band = this many metres from the lines
-    UTM_EPSG=32644,         # UTM 44N (78–84 E)
+    UTM_EPSG=32643,         # UTM 43N (72–78 E; Jaipur area)
     SCAN_DATE="2026-09-28",
     PREV_SCAN="2026-09-16",
     CLOUD_COVER="4 %",
@@ -63,13 +62,14 @@ _G = "&copy; Google Maps"
 _E = ("Tiles &copy; Esri &mdash; Source: Esri, Maxar, Earthstar Geographics, "
       "GIS User Community")
 BASEMAPS = {
-    "Google Satellite":         ("https://mt{s}.google.com/vt/lyrs=s&x={x}&y={y}&z={z}", _G, ["0", "1", "2", "3"], 21),
-    "Google Hybrid (sat+labels)": ("https://mt{s}.google.com/vt/lyrs=y&x={x}&y={y}&z={z}", _G, ["0", "1", "2", "3"], 21),
-    "Google Terrain":           ("https://mt{s}.google.com/vt/lyrs=p&x={x}&y={y}&z={z}", _G, ["0", "1", "2", "3"], 20),
-    "Esri Satellite":           ("https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}", _E, None, 19),
-    "Esri Topo":                ("https://server.arcgisonline.com/ArcGIS/rest/services/World_Topo_Map/MapServer/tile/{z}/{y}/{x}", _E, None, 19),
-    "CartoDB Dark":             ("https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png", "&copy; OpenStreetMap contributors &copy; CARTO", "abcd", 20),
-    "OpenStreetMap":            ("OpenStreetMap", None, None, 19),
+    "Google Satellite": (
+        "https://mt{s}.google.com/vt/lyrs=s&x={x}&y={y}&z={z}",
+        _G, ["0", "1", "2", "3"], 21
+    ),
+    "Satellite Image": (
+        "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}",
+        _E, None, 19
+    ),
 }
 
 SEV_RANK = {"Critical": 4, "High": 3, "Medium": 2, "Low": 1}
@@ -79,39 +79,6 @@ VEG_STYLE = {
     2: {"label": "Medium",            "core": "#f79824", "halo": "#ffe08a", "r": 6.0},
     1: {"label": "Light (Low risk)",  "core": "#1a9850", "halo": "#a6d96a", "r": 5.0},
 }
-
-
-# ═══════════════════════════════════════════════════════════════════════════════
-# Synthetic corridor generator — drops an imaginary pipeline over any location
-# (e.g. the centre of your Cartosat scene). Returns lines as [(lon, lat), ...].
-# ═══════════════════════════════════════════════════════════════════════════════
-def _utm_epsg(lon, lat):
-    return (32600 if lat >= 0 else 32700) + int((lon + 180) // 6) + 1
-
-
-def make_synthetic_lines(center_lon, center_lat, length_m=1500, bearing_deg=15,
-                         n_lines=3, spacing_m=25, n_pts=8, wobble_m=12, seed=7):
-    epsg = _utm_epsg(center_lon, center_lat)
-    to_utm = pyproj.Transformer.from_crs(4326, epsg, always_xy=True).transform
-    to_wgs = pyproj.Transformer.from_crs(epsg, 4326, always_xy=True).transform
-    cx, cy = to_utm(center_lon, center_lat)
-    th = math.radians(bearing_deg)
-    dx, dy = math.sin(th), math.cos(th)      # along-corridor unit vector
-    nx, ny = math.cos(th), -math.sin(th)     # across-corridor unit vector
-    rnd = random.Random(seed)
-    lines = []
-    for li in range(n_lines):
-        off = (li - (n_lines - 1) / 2.0) * spacing_m
-        pts = []
-        for i in range(n_pts):
-            t = (i / (n_pts - 1) - 0.5) * length_m
-            w = rnd.uniform(-wobble_m, wobble_m)
-            x = cx + dx * t + nx * (off + w)
-            y = cy + dy * t + ny * (off + w)
-            lon, lat = to_wgs(x, y)
-            pts.append((lon, lat))
-        lines.append(pts)
-    return lines
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -420,7 +387,7 @@ def generate_corridor(lines_lonlat=None, cfg=None):
 # ═══════════════════════════════════════════════════════════════════════════════
 def build_map(data, cfg=None, basemap="Google Satellite", visible_layers=None,
               cartosat=None, severities=None, center=None, zoom=16,
-              overlays=None, change_geojson=None):
+              overlays=None, change_geojson=None, max_bounds=None):
     cfg = {**DEFAULT_CFG, **(cfg or {})}
     visible = set(visible_layers if visible_layers is not None else ALL_LAYERS)
     severities = set(severities) if severities is not None else set(SEV_RANK)
@@ -429,7 +396,15 @@ def build_map(data, cfg=None, basemap="Google Satellite", visible_layers=None,
     SCAN_DATE, PREV_SCAN = cfg["SCAN_DATE"], cfg["PREV_SCAN"]
 
     m = folium.Map(location=center or [data["clat"], data["clon"]],
-                   zoom_start=zoom, tiles=None, control_scale=True, zoom_control=True)
+                   zoom_start=zoom, tiles=None, control_scale=True, zoom_control=True,
+                   max_bounds=True if max_bounds else False,
+                   max_bounds_viscosity=1.0)
+    if max_bounds:
+        m.fit_bounds(max_bounds)
+        # Leaflet maxBounds prevents dragging the map outside the permitted
+        # rectangular viewport. Bounds are supplied as [[south, west], [north, east]].
+        m.options["maxBounds"] = max_bounds
+        m.options["maxBoundsViscosity"] = 1.0
 
     # basemap (only the selected one is added)
     url, attr, subs, mx = BASEMAPS.get(basemap, BASEMAPS["Google Satellite"])
@@ -439,33 +414,39 @@ def build_map(data, cfg=None, basemap="Google Satellite", visible_layers=None,
         folium.TileLayer(url, attr=attr, name=basemap, subdomains=subs or "abc",
                          max_zoom=mx, show=True).add_to(m)
 
-    # imagery overlays: Cartosat RGB, a selected GEP epoch, change heatmap, etc.
-    # Each item: {name, png|path, bounds, opacity, zindex}. Drawn in list order.
+    # Optional georeferenced raster overlays supplied by the imagery manifest.
     for ov in (overlays or []):
-        p = ov.get("png") or ov.get("path")
-        if not (p and os.path.exists(p)):
-            continue
-        folium.raster_layers.ImageOverlay(
-            image=p, bounds=ov["bounds"], opacity=ov.get("opacity", 0.9),
-            name=ov.get("name", "Imagery"), zindex=ov.get("zindex", 2)).add_to(m)
+        image_path = ov.get("png") or ov.get("path")
+        bounds = ov.get("bounds")
+        if image_path and bounds and os.path.exists(image_path):
+            folium.raster_layers.ImageOverlay(
+                image=image_path, bounds=bounds,
+                opacity=ov.get("opacity", 0.85),
+                name=ov.get("name", "Imagery"),
+                zindex=ov.get("zindex", 3),
+            ).add_to(m)
 
-    # back-compat single Cartosat overlay
+    # Optional candidate-change polygons from the imagery workflow.
+    if change_geojson and change_geojson.get("features"):
+        folium.GeoJson(
+            change_geojson,
+            name="Imagery change candidates",
+            style_function=lambda feature: {
+                "color": "#ff1744", "weight": 2,
+                "fillColor": "#ff1744", "fillOpacity": 0.28,
+            },
+            tooltip=folium.GeoJsonTooltip(
+                fields=[k for k in ("id", "area_m2", "conf")
+                        if k in (change_geojson["features"][0].get("properties") or {})]
+            ) if any(k in (change_geojson["features"][0].get("properties") or {})
+                     for k in ("id", "area_m2", "conf")) else None,
+        ).add_to(m)
+
+    # optional Cartosat overlay (ImageOverlay — no tile server needed)
     if cartosat and cartosat.get("path") and os.path.exists(cartosat["path"]):
         folium.raster_layers.ImageOverlay(
             image=cartosat["path"], bounds=cartosat.get("bounds") or data["img_bounds"],
             opacity=cartosat.get("opacity", 0.9), name="Cartosat", zindex=2).add_to(m)
-
-    # change-detection polygons (vectorized from the imagery pair)
-    if change_geojson and change_geojson.get("features"):
-        fgc = folium.FeatureGroup(name="Detected change", show=True)
-        folium.GeoJson(
-            change_geojson,
-            style_function=lambda f: {"color": "#ff1744", "weight": 1.6,
-                                      "fillColor": "#ff1744", "fillOpacity": 0.25},
-            tooltip=folium.GeoJsonTooltip(
-                fields=["id", "area_m2", "from", "to"],
-                aliases=["Case", "Area m²", "From", "To"])).add_to(fgc)
-        fgc.add_to(m)
 
     # ① corridor + lines + towers + chainage
     if "corridor" in visible:
