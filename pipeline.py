@@ -400,31 +400,31 @@ def build_map(data, cfg=None, basemap="Google Satellite", visible_layers=None,
                    max_bounds=True if max_bounds else False,
                    max_bounds_viscosity=1.0)
     if max_bounds:
-    import json
+        import json
 
-    bounds_json = json.dumps(max_bounds)
+        bounds_json = json.dumps(max_bounds)
 
-    m.fit_bounds(max_bounds)
+        m.fit_bounds(max_bounds)
 
-    m.options["maxBounds"] = max_bounds
-    m.options["maxBoundsViscosity"] = 1.0
+        m.options["maxBounds"] = max_bounds
+        m.options["maxBoundsViscosity"] = 1.0
 
-    # Dynamically prevent zooming out beyond the permitted viewing area
-    m.get_root().script.add_child(Element(f"""
-    (function() {{
-        var map = {m.get_name()};
-        var bounds = L.latLngBounds({bounds_json});
+        # Dynamically prevent zooming out beyond the permitted viewing area
+        m.get_root().script.add_child(Element(f"""
+        (function() {{
+            var map = {m.get_name()};
+            var bounds = L.latLngBounds({bounds_json});
 
-        map.setMaxBounds(bounds);
-        map.options.maxBoundsViscosity = 1.0;
+            map.setMaxBounds(bounds);
+            map.options.maxBoundsViscosity = 1.0;
 
-        map.whenReady(function() {{
-            var minimumZoom = map.getBoundsZoom(bounds);
-            map.setMinZoom(minimumZoom);
-            map.fitBounds(bounds);
-        }});
-    }})();
-    """))
+            map.whenReady(function() {{
+                var minimumZoom = map.getBoundsZoom(bounds);
+                map.setMinZoom(minimumZoom);
+                map.fitBounds(bounds);
+            }});
+        }})();
+        """))
 
     # basemap (only the selected one is added)
     url, attr, subs, mx = BASEMAPS.get(basemap, BASEMAPS["Google Satellite"])
