@@ -4,6 +4,7 @@ import os
 import yaml
 from yaml.loader import SafeLoader
 
+import folium
 import pandas as pd
 import streamlit as st
 import streamlit_authenticator as stauth
@@ -261,7 +262,11 @@ with st.sidebar:
     st.caption(f"{OPERATOR} · {PIPELINE_NAME}")
     st.divider()
 
-    basemap = st.selectbox("Basemap", list(P.BASEMAPS.keys()), index=0)
+    st.markdown("**Imagery blend**")
+    st.caption("Google Satellite (below) · Satellite Image (above)")
+    blend = st.slider("Blend", 0, 100, 0, 5, label_visibility="collapsed",
+                      help="0 = Google Satellite only · 100 = Satellite Image only")
+    basemap = "Google Satellite"  # fixed base layer; the slider above adds the second
 
     layer_labels = {k: lbl for k, lbl in P.LAYER_DEFS}
     chosen = st.multiselect("Detection layers", options=P.ALL_LAYERS,
@@ -292,18 +297,18 @@ with st.sidebar:
         detect_buffer = st.slider("Monitoring band (m)", 20, 150,
                                   P.DEFAULT_CFG["DETECT_BUFFER_M"], 10)
 
-    with st.expander("Legend"):
-        st.markdown(
-            "<div class='legrow'><span class='swatch' style='background:#ff1744'></span>"
-            "Detected change (imagery)</div>"
-            "<div class='legrow'><span class='swatch' style='background:#d7191c'></span>"
-            "Vegetation — dense</div>"
-            "<div class='legrow'><span class='swatch' style='background:#2196f3'></span>"
-            "Water / flood</div>"
-            "<div class='legrow'><span class='swatch' style='background:#8d6e63'></span>"
-            "Excavation</div>"
-            "<div class='legrow'><span class='swatch' style='background:#ffa500'></span>"
-            "RoW corridor</div>", unsafe_allow_html=True)
+    st.markdown("**Legend**")
+    st.markdown(
+        "<div class='legrow'><span class='swatch' style='background:#ff1744'></span>"
+        "Detected change (imagery)</div>"
+        "<div class='legrow'><span class='swatch' style='background:#d7191c'></span>"
+        "Vegetation — dense</div>"
+        "<div class='legrow'><span class='swatch' style='background:#2196f3'></span>"
+        "Water / flood</div>"
+        "<div class='legrow'><span class='swatch' style='background:#8d6e63'></span>"
+        "Excavation</div>"
+        "<div class='legrow'><span class='swatch' style='background:#ffa500'></span>"
+        "RoW corridor</div>", unsafe_allow_html=True)
 
     st.divider()
     st.caption(f"Signed in as **{st.session_state.get('name', 'user')}**")
@@ -421,8 +426,8 @@ def epoch_overlay(entry, opacity, z=3):
             "bounds": entry["bounds"], "opacity": opacity, "zindex": z}
 
 
-tab_map, tab_img, tab_cases, tab_overview = st.tabs(
-    ["🗺  Corridor map", "🛰  Imagery & change", "📋  Case register", "📊  Overview"])
+tab_map, tab_cases, tab_overview = st.tabs(
+    ["🗺  Corridor map", "📋  Case register", "📊  Overview"])
 
 # ── map tab ──────────────────────────────────────────────────────────────────────
 with tab_map:
@@ -441,45 +446,32 @@ with tab_map:
                     severities=severities, overlays=overlays,
                     change_geojson=change_fc, center=map_center, zoom=map_zoom,
                     max_bounds=VIEW_BOUNDS)
-    st_folium(m, use_container_width=True, height=620, returned_objects=[])
 
-# ── imagery & change tab ──────────────────────────────────────────────────────────
-with tab_img:
-    if not man or not man.get("change"):
-        st.info("Run `python prep.py` with your Cartosat GeoTIFF and aligned historical imagery "
-                "to populate imagery and change detection here.")
-    else:
-        pair_opts = [f"{c['from']} → {c['to']}" for c in man["change"]]
-        sel_pair = st.selectbox("Change pair", pair_opts, index=len(pair_opts) - 1)
-        ch = man["change"][pair_opts.index(sel_pair)]
-        a = epoch_lookup.get(f"GEP {ch['from']}") or epoch_lookup.get(ch["from"])
-        b = epoch_lookup.get(f"GEP {ch['to']}") or epoch_lookup.get(ch["to"])
+    # Second basemap layered on top with adjustable opacity -- the "Imagery
+    # blend" slider. Done here (not in pipeline.py) by adding directly to the
+    # Map object build_map() already returned; overlay=True, control=False
+    # keeps it out of any layer-control UI since there isn't one on this map.
+    if blend > 0:
+        ov_url, ov_attr, ov_subs, ov_mx = P.BASEMAPS["Satellite Image"]
+        folium.TileLayer(ov_url, attr=ov_attr, name="Satellite Image (blend)",
+                         subdomains=ov_subs or "abc", max_zoom=ov_mx,
+                         opacity=blend / 100.0, overlay=True, control=False).add_to(m)
 
-        col_a, col_b = st.columns(2)
-        with col_a:
-            st.caption(f"Before · {ch['from']}")
-            ma = P.build_map(data, cfg=cfg, basemap=basemap, visible_layers=["corridor"],
-                             overlays=[epoch_overlay(a, 1.0)] if a else [],
-                             center=center, zoom=14, max_bounds=VIEW_BOUNDS)
-            st_folium(ma, use_container_width=True, height=440, returned_objects=[],
-                      key="map_before")
-        with col_b:
-            st.caption(f"After · {ch['to']} (change overlay in red)")
-            ovb = [epoch_overlay(b, 1.0)] if b else []
-            ovb.append({"name": "Change", "png": ch["png"], "bounds": ch["bounds"],
-                        "opacity": 0.8, "zindex": 5})
-            mb = P.build_map(data, cfg=cfg, basemap=basemap, visible_layers=["corridor"],
-                             overlays=ovb, change_geojson=change_fc,
-                             center=center, zoom=14, max_bounds=VIEW_BOUNDS)
-            st_folium(mb, use_container_width=True, height=440, returned_objects=[],
-                      key="map_after")
+    # Hide the basemap attribution/source control shown on the map itself.
+    m.options["attributionControl"] = False
 
-        pair_cases = [r for r in chg_rows if r["Type"] == f"Change {ch['from']}→{ch['to']}"]
-        st.caption(f"{len(pair_cases)} change features detected between "
-                   f"{ch['from']} and {ch['to']}")
-        if pair_cases:
-            st.dataframe(pd.DataFrame(pair_cases)[["ID", "Severity", "Confidence",
-                         "Chainage", "Lat", "Lon"]], width="stretch", hide_index=True)
+    # Force a full remount whenever anything affecting the map's content changes.
+    # st_folium tries to update an already-mounted map in place for some prop
+    # changes (zoom/center), but doesn't reliably pick up layers added/removed
+    # between reruns (confirmed: the Imagery-blend overlay above didn't appear
+    # on the live map without this). A key tied to everything relevant forces
+    # a clean remount instead of relying on that in-place update path.
+    map_key = "corridor_map_" + "_".join(str(v) for v in [
+        blend, sorted(chosen), sorted(severities), sel_epoch, show_change,
+        sel_ch, jump_zoom,
+    ])
+    st_folium(m, use_container_width=True, height=620, returned_objects=[],
+             key=map_key)
 
 
 # ── inspection-report export (plain HTML -- no new pip dependency) ──────────────
