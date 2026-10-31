@@ -105,8 +105,17 @@ html,body,[class*="css"],.stApp{font-family:'Inter',system-ui,sans-serif;}
 .stApp{background:
   radial-gradient(1200px 500px at 10% -10%, rgba(56,189,248,.05), transparent),
   var(--ink);}
-[data-testid="stToolbar"]{visibility:visible;}
-footer{visibility:hidden;}
+/* Hide Streamlit-hosted chrome and floating platform controls for client demos. */
+[data-testid="stToolbar"],
+[data-testid="stStatusWidget"],
+[data-testid="stAppDeployButton"],
+.stDeployButton,
+#MainMenu,
+footer,
+.viewerBadge_container__1QSob,
+[data-testid="stDecoration"]{display:none !important; visibility:hidden !important;}
+header{visibility:hidden !important; height:0 !important;}
+
 .block-container{padding-top:1rem;padding-bottom:0.5rem;max-width:1640px;}
 [data-testid="stSidebar"]{background:var(--panel);border-right:1px solid var(--border);}
 [data-testid="stSidebar"] .stSelectbox label,
@@ -415,15 +424,12 @@ with st.sidebar:
     st.divider()
 
     st.markdown("**Basemap layers**")
-    st.caption("Satellite Image is enabled by default and displayed above Google when both are selected.")
-    show_google = st.checkbox("Google", value=True, key="show_google_basemap")
     show_satellite_image = st.checkbox(
-        "Satellite Image", value=True, key="show_satellite_image_basemap_v2"
+        "Satellite Image", value=True, key="show_satellite_image_basemap_v3"
     )
+    show_google = st.checkbox("Google", value=False, key="show_google_basemap_v3")
     if not show_google and not show_satellite_image:
         st.caption("No basemap selected — detection layers remain visible.")
-    elif show_google and show_satellite_image:
-        st.caption("Both layers enabled · Satellite Image is displayed above Google at 50% opacity.")
 
     layer_labels = {k: lbl for k, lbl in P.LAYER_DEFS}
     chosen = st.multiselect(
