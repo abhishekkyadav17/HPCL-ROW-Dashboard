@@ -1,12 +1,5 @@
 # ═══════════════════════════════════════════════════════════════════════════════
 # pipeline.py  ·  RoW corridor surveillance — detection + map engine
-#
-# This is the Colab logic, refactored into two pure functions the dashboard calls:
-#   generate_corridor(lines_lonlat, cfg) -> dict   (all detections + geometry)
-#   build_map(data, cfg, basemap, visible_layers, cartosat) -> folium.Map
-#
-# No Streamlit in here on purpose: it stays testable and reusable. All randomness
-# is seeded so the same corridor regenerates identically across reruns.
 # ═══════════════════════════════════════════════════════════════════════════════
 
 import json
@@ -21,18 +14,16 @@ from shapely.geometry import LineString, Point, Polygon
 from shapely.ops import substring, transform, unary_union, nearest_points
 import pyproj
 
-# ── defaults (edit here or override from the app) ───────────────────────────────
 DEFAULT_CFG = dict(
-    ROW_MARGIN_M=20,        # RoW = this many metres beyond the outer lines
-    DETECT_BUFFER_M=50,     # monitoring band = this many metres from the lines
-    UTM_EPSG=32643,         # UTM 43N (72–78 E; Jaipur area)
+    ROW_MARGIN_M=20,
+    DETECT_BUFFER_M=50,
+    UTM_EPSG=32643,
     SCAN_DATE="2026-09-28",
     PREV_SCAN="2026-09-16",
     CLOUD_COVER="4 %",
     SEED=7,
 )
 
-# three parallel 132 kV conductors, ~1.5 km clipped from the KML (lon, lat)
 DEFAULT_LINES = [
     [(78.757978, 29.515077), (78.758085, 29.513506), (78.757834, 29.512085),
      (78.75739, 29.509736), (78.756761, 29.506223), (78.75742, 29.504126),
@@ -45,7 +36,6 @@ DEFAULT_LINES = [
      (78.758718, 29.513165), (78.758523, 29.514822)],
 ]
 
-# canonical layer keys -> label shown in the sidebar / map
 LAYER_DEFS = [
     ("corridor",   "① Transmission lines + RoW corridor"),
     ("vegetation", "② Vegetation encroachment"),
@@ -58,7 +48,6 @@ LAYER_DEFS = [
 ]
 ALL_LAYERS = [k for k, _ in LAYER_DEFS]
 
-# basemap catalogue: name -> (url, attribution, subdomains, max_zoom)
 _G = "&copy; Google Maps"
 _E = ("Tiles &copy; Esri &mdash; Source: Esri, Maxar, Earthstar Geographics, "
       "GIS User Community")
@@ -82,19 +71,11 @@ VEG_STYLE = {
 }
 
 
-# ═══════════════════════════════════════════════════════════════════════════════
-# KML / GeoJSON loader (falls back to the built-in sample so the app always runs)
-# ═══════════════════════════════════════════════════════════════════════════════
 def load_lines(path=None, fallback=DEFAULT_LINES):
-    """Return a list of conductor lines as [(lon, lat), ...].
-
-    Tries a GeoJSON or KML file at `path`; if anything is missing or unreadable,
-    returns the built-in sample corridor so the demo never breaks.
-    """
     if not path or not os.path.exists(path):
         return fallback
     try:
-        import geopandas as gpd  # optional; only needed if you wire in a real file
+        import geopandas as gpd
         gdf = gpd.read_file(path)
         lines = []
         for geom in gdf.geometry:
@@ -110,9 +91,6 @@ def load_lines(path=None, fallback=DEFAULT_LINES):
         return fallback
 
 
-# ═══════════════════════════════════════════════════════════════════════════════
-# DETECTION ENGINE  (ported 1:1 from the Colab cell, wrapped in a function)
-# ═══════════════════════════════════════════════════════════════════════════════
 def generate_corridor(lines_lonlat=None, cfg=None):
     cfg = {**DEFAULT_CFG, **(cfg or {})}
     lines_lonlat = lines_lonlat or DEFAULT_LINES
@@ -182,7 +160,6 @@ def generate_corridor(lines_lonlat=None, cfg=None):
                 cy + mean_r * (1 + rnd.uniform(-jitter, jitter)) * math.sin(a)) for a in angs]
         return Polygon(pts).buffer(0)
 
-    # ── ① vegetation ───────────────────────────────────────────────────────────
     def risk_profile(frac):
         if 0.14 < frac < 0.30: return 3
         if 0.55 < frac < 0.69: return 3
@@ -216,7 +193,6 @@ def generate_corridor(lines_lonlat=None, cfg=None):
                         "ndvi": round(random.uniform(0.62, 0.84), 2)})
         bd += random.uniform(24, 40)
 
-    # ── ② water / flood ─────────────────────────────────────────────────────────
     FLOOD_DEFS = [(480, +1, 12, 34, 101), (980, -1, 14, 26, 202), (1250, +1, 55, 28, 303)]
     floods = []
     for i, (dl, side, tdist, mr, sd) in enumerate(FLOOD_DEFS, 1):
@@ -238,7 +214,6 @@ def generate_corridor(lines_lonlat=None, cfg=None):
             "centroid": ll(Point(poly.centroid)),
             "within_rou": pct_rou > 0, "within_band": pct_band > 0})
 
-    # ── ③ excavation ────────────────────────────────────────────────────────────
     EXC_DEFS = [
         (900, -1, 78, 13, 2.8, 404, "Earthwork beyond corridor (left side)"),
         (1120, +1, 40, 16, 1.6, 505, "Soil stockpile / trenching"),
@@ -262,7 +237,6 @@ def generate_corridor(lines_lonlat=None, cfg=None):
             "within_rou": pct_rou > 0,
             "within_band": poly.distance(union_utm) <= DETECT_BUFFER_M})
 
-    # ── ⑤ new road ──────────────────────────────────────────────────────────────
     rp1 = centre_at(620, -1, 70); rp2 = centre_at(620, +1, 70)
     road_utm = LineString([(rp1.x, rp1.y), (rp2.x, rp2.y)])
     road_wgs = to_wgs(road_utm)
@@ -275,7 +249,6 @@ def generate_corridor(lines_lonlat=None, cfg=None):
                       f"{'YES' if road_utm.distance(union_utm) <= DETECT_BUFFER_M else 'no'}")
     road_mid = ll(Point(road_utm.centroid))
 
-    # ── ⑥ structures ────────────────────────────────────────────────────────────
     def rect_at_dist(d_along, side, target_dist, w, h):
         c = centre_at_dist(d_along, side, target_dist)
         return Polygon([(c.x - w / 2, c.y - h / 2), (c.x + w / 2, c.y - h / 2),
@@ -297,7 +270,6 @@ def generate_corridor(lines_lonlat=None, cfg=None):
             "in_rou": pu.distance(union_utm) <= ROW_MARGIN_M,
             "ch_m": REF.project(Point(pu.centroid)), "conf": random.randint(82, 98)})
 
-    # ── ⑦ segment risk ribbon ───────────────────────────────────────────────────
     SEG_M = 80
     segments = []; s = 0.0
     while s < L:
@@ -317,7 +289,6 @@ def generate_corridor(lines_lonlat=None, cfg=None):
                              "label": lab, "ch": int((s + e) / 2)})
         s = e
 
-    # ── case register ────────────────────────────────────────────────────────────
     cases = []
     for i, v in enumerate(sorted([v for v in veg if v["level"] >= 2],
                                  key=lambda v: (-v["level"], v["dist_m"]))[:4], 1):
@@ -347,7 +318,6 @@ def generate_corridor(lines_lonlat=None, cfg=None):
             "latlon": s2["centroid"]})
     cases.sort(key=lambda c: (-SEV_RANK[c["sev"]], -c["conf"]))
 
-    # ── chainage ticks + bbox for the Cartosat overlay ──────────────────────────
     chainage_ticks = [(ll(REF.interpolate(dd)), chainage_str(dd))
                       for dd in range(0, int(L) + 1, 250)]
     minx, miny, maxx, maxy = detect_wgs.bounds
@@ -383,9 +353,6 @@ def generate_corridor(lines_lonlat=None, cfg=None):
     )
 
 
-# ═══════════════════════════════════════════════════════════════════════════════
-# MAP BUILDER
-# ═══════════════════════════════════════════════════════════════════════════════
 def build_map(data, cfg=None, basemap="Google Satellite", visible_layers=None,
               cartosat=None, severities=None, center=None, zoom=16,
               overlays=None, change_geojson=None, max_bounds=None):
@@ -402,51 +369,59 @@ def build_map(data, cfg=None, basemap="Google Satellite", visible_layers=None,
 
     if max_bounds:
         bounds_json = json.dumps(max_bounds)
-        # Fit initial view to the permitted rectangle. The client-side guard below
-        # then keeps the ENTIRE Leaflet viewport inside that rectangle.
         m.fit_bounds(max_bounds)
         m.get_root().script.add_child(Element(f"""
         (function() {{
-            var map = {m.get_name()};
-            var allowed = L.latLngBounds({bounds_json});
-            var enforcing = false;
+            function initRestrictedView() {{
+                var map = {m.get_name()};
+                var allowed = L.latLngBounds({bounds_json});
+                var enforcing = false;
 
-            function enforceAllowedViewport() {{
-                if (enforcing || !map || !map.getSize().x || !map.getSize().y) return;
-                enforcing = true;
+                function enforceAllowedViewport() {{
+                    if (enforcing || !map || !map.getSize().x || !map.getSize().y) return;
+                    enforcing = true;
 
-                // inside=true means the map viewport must fit within allowed.
-                var minZoom = map.getBoundsZoom(allowed, true);
-                if (isFinite(minZoom) && map.getZoom() < minZoom) {{
-                    map.setZoom(minZoom, {{animate: false}});
+                    var minZoom = map.getBoundsZoom(allowed, true);
+                    if (isFinite(minZoom) && map.getZoom() < minZoom) {{
+                        map.setZoom(minZoom, {{animate: false}});
+                    }}
+
+                    map.setMaxBounds(allowed);
+                    map.options.maxBoundsViscosity = 1.0;
+                    if (!allowed.contains(map.getBounds())) {{
+                        map.panInsideBounds(allowed, {{animate: false}});
+                    }}
+
+                    enforcing = false;
                 }}
 
-                // maxBounds limits dragging; panInsideBounds corrects any edge
-                // overshoot after drag, keyboard movement, or programmatic pan.
-                map.setMaxBounds(allowed);
-                map.options.maxBoundsViscosity = 1.0;
-                if (!allowed.contains(map.getBounds())) {{
-                    map.panInsideBounds(allowed, {{animate: false}});
-                }}
-
-                enforcing = false;
+                map.whenReady(function() {{
+                    window.setTimeout(function() {{
+                        map.invalidateSize({{animate: false}});
+                        enforceAllowedViewport();
+                        map.on('zoomend moveend dragend', enforceAllowedViewport);
+                        map.on('resize', function() {{
+                            window.setTimeout(enforceAllowedViewport, 0);
+                        }});
+                    }}, 150);
+                }});
             }}
 
-            map.whenReady(function() {{
-                // Wait until the Streamlit iframe has its final dimensions.
-                window.setTimeout(function() {{
-                    map.invalidateSize({{animate: false}});
-                    enforceAllowedViewport();
-                    map.on('zoomend moveend dragend', enforceAllowedViewport);
-                    map.on('resize', function() {{
-                        window.setTimeout(enforceAllowedViewport, 0);
-                    }});
-                }}, 150);
-            }});
+            // This script is emitted into the page BEFORE the Leaflet map
+            // object itself is defined (folium renders it in registration
+            // order, and this is registered at build_map() call time --
+            // earlier than the map's own init script). Referencing the map
+            // variable immediately throws. Deferring to 'load' guarantees
+            // every other script on the page, including the map's own init,
+            // has already run by the time this executes.
+            if (document.readyState === "complete") {{
+                initRestrictedView();
+            }} else {{
+                window.addEventListener("load", initRestrictedView);
+            }}
         }})();
         """))
 
-    # basemap (only the selected one is added)
     url, attr, subs, mx = BASEMAPS.get(basemap, BASEMAPS["Google Satellite"])
     if url == "OpenStreetMap":
         folium.TileLayer("OpenStreetMap", name=basemap, max_zoom=mx).add_to(m)
@@ -454,7 +429,6 @@ def build_map(data, cfg=None, basemap="Google Satellite", visible_layers=None,
         folium.TileLayer(url, attr=attr, name=basemap, subdomains=subs or "abc",
                          max_zoom=mx, show=True).add_to(m)
 
-    # Optional georeferenced raster overlays supplied by the imagery manifest.
     for ov in (overlays or []):
         image_path = ov.get("png") or ov.get("path")
         bounds = ov.get("bounds")
@@ -466,7 +440,6 @@ def build_map(data, cfg=None, basemap="Google Satellite", visible_layers=None,
                 zindex=ov.get("zindex", 3),
             ).add_to(m)
 
-    # Optional candidate-change polygons from the imagery workflow.
     if change_geojson and change_geojson.get("features"):
         folium.GeoJson(
             change_geojson,
@@ -482,13 +455,11 @@ def build_map(data, cfg=None, basemap="Google Satellite", visible_layers=None,
                      for k in ("id", "area_m2", "conf")) else None,
         ).add_to(m)
 
-    # optional Cartosat overlay (ImageOverlay — no tile server needed)
     if cartosat and cartosat.get("path") and os.path.exists(cartosat["path"]):
         folium.raster_layers.ImageOverlay(
             image=cartosat["path"], bounds=cartosat.get("bounds") or data["img_bounds"],
             opacity=cartosat.get("opacity", 0.9), name="Cartosat", zindex=2).add_to(m)
 
-    # ① corridor + lines + towers + chainage
     if "corridor" in visible:
         fg = folium.FeatureGroup(name="corridor", show=True)
         folium.GeoJson(data["detect_wgs"].__geo_interface__,
@@ -514,7 +485,6 @@ def build_map(data, cfg=None, basemap="Google Satellite", visible_layers=None,
                       f"box-shadow:0 1px 2px rgba(0,0,0,.4);'>CH {label}</div>"))).add_to(fg)
         fg.add_to(m)
 
-    # ② vegetation
     if "vegetation" in visible:
         fg = folium.FeatureGroup(name="vegetation", show=True)
         for v in data["veg"]:
@@ -535,7 +505,6 @@ def build_map(data, cfg=None, basemap="Google Satellite", visible_layers=None,
                     f"</div></div>", max_width=260)).add_to(fg)
         fg.add_to(m)
 
-    # ③ water / flood
     if "water" in visible:
         fg = folium.FeatureGroup(name="water", show=True)
         for f in data["floods"]:
@@ -567,7 +536,6 @@ def build_map(data, cfg=None, basemap="Google Satellite", visible_layers=None,
                     f"Confidence: <b>{f['conf']}%</b></div></div>", max_width=300)).add_to(fg)
         fg.add_to(m)
 
-    # ④ excavation
     if "excavation" in visible:
         fg = folium.FeatureGroup(name="excavation", show=True)
         for x in data["excs"]:
@@ -599,7 +567,6 @@ def build_map(data, cfg=None, basemap="Google Satellite", visible_layers=None,
                     f"</div></div>", max_width=320)).add_to(fg)
         fg.add_to(m)
 
-    # ⑤ new road
     if "road" in visible:
         fg = folium.FeatureGroup(name="road", show=True)
         rd = data["road"]
@@ -622,7 +589,6 @@ def build_map(data, cfg=None, basemap="Google Satellite", visible_layers=None,
                 fill_color="#d500f9", fill_opacity=1).add_to(fg)
         fg.add_to(m)
 
-    # ⑥ structures
     if "structures" in visible:
         fg = folium.FeatureGroup(name="structures", show=True)
         STR_COL = {"Permanent": "#ff1744", "Temporary": "#ff9100"}
@@ -645,7 +611,6 @@ def build_map(data, cfg=None, basemap="Google Satellite", visible_layers=None,
                     f"</div></div>", max_width=280)).add_to(fg)
         fg.add_to(m)
 
-    # ⑦ segment risk ribbon
     if "risk" in visible:
         fg = folium.FeatureGroup(name="risk", show=True)
         for sg in data["segments"]:
@@ -655,7 +620,6 @@ def build_map(data, cfg=None, basemap="Google Satellite", visible_layers=None,
                 tooltip=f"Segment CH {cs(sg['ch'])} · Risk: {sg['label']}").add_to(fg)
         fg.add_to(m)
 
-    # ⑧ case-ID markers (respects the severity filter)
     if "caseids" in visible:
         fg = folium.FeatureGroup(name="caseids", show=True)
         for c in data["cases"]:
@@ -668,7 +632,6 @@ def build_map(data, cfg=None, basemap="Google Satellite", visible_layers=None,
                       f"white-space:nowrap;box-shadow:0 1px 3px rgba(0,0,0,.5);'>{c['id']}</div>"))).add_to(fg)
         fg.add_to(m)
 
-    # map controls + pulse animation for critical features
     Fullscreen(position="topleft").add_to(m)
     MeasureControl(position="topleft", primary_length_unit="meters",
                    primary_area_unit="sqmeters").add_to(m)
