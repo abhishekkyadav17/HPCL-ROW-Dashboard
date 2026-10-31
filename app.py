@@ -142,18 +142,18 @@ center = [
 ]
 cache_key = "jaipur_pipeline_20261031"
 
-# Build a 5 km buffer around the actual pipeline in UTM 43N, then convert its
-# bounding rectangle to WGS84 for Leaflet's maxBounds.
-from shapely.geometry import LineString
-from shapely.ops import transform as shp_transform
-import pyproj
-_to_utm = pyproj.Transformer.from_crs("EPSG:4326", "EPSG:32643", always_xy=True).transform
-_to_wgs = pyproj.Transformer.from_crs("EPSG:32643", "EPSG:4326", always_xy=True).transform
-_pipeline_utm = shp_transform(_to_utm, LineString([PIPELINE_START, PIPELINE_END]))
-_view_area_utm = _pipeline_utm.buffer(5000)
-_view_area_wgs = shp_transform(_to_wgs, _view_area_utm)
-_min_lon, _min_lat, _max_lon, _max_lat = _view_area_wgs.bounds
-VIEW_BOUNDS = [[_min_lat, _min_lon], [_max_lat, _max_lon]]
+# Fixed map viewing boundary (WGS84)
+# Coordinates supplied for the Jaipur pipeline area
+
+SOUTH = 26.86791
+NORTH = 26.89145
+WEST = 75.80760
+EAST = 75.85929
+
+VIEW_BOUNDS = [
+    [SOUTH, WEST],  # Southwest
+    [NORTH, EAST]   # Northeast
+]
 
 change_fc = load_change_cases(man.get("cases_geojson") if man else None)
 
