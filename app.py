@@ -24,7 +24,7 @@ import pipeline as P
 BRAND = "RoW Sentinel"
 SUBTITLE = "Cartosat-2S + Google Earth historical · change console"
 ORG = "BioSky Space Innovations"
-ASSET = "Imaginary pipeline corridor · South Jaipur"
+ASSET = "Pipeline ROW Monitoring · Jaipur"
 MANIFEST = "data/derived/layers_manifest.json"
 
 KPI = {"total": "#38bdf8", "Critical": "#e5484d", "High": "#f0883e",
@@ -131,14 +131,29 @@ def get_data(cache_key, row_margin, detect_buffer, _lines):
     return P.generate_corridor(_lines, cfg)
 
 man = load_manifest()
-if man:
-    lines = man["corridor_lines"]
-    center = man["center"]
-    cache_key = "manifest"
-else:
-    center = [26.80, 75.80]                               # South Jaipur fallback
-    lines = P.make_synthetic_lines(center[1], center[0], bearing_deg=18)
-    cache_key = "default"
+# Fixed observation corridor for this HPCL demonstration.
+# Coordinates are stored as (longitude, latitude), as expected by pipeline.py.
+PIPELINE_START = (75.85311, 26.87124)
+PIPELINE_END = (75.80952, 26.88724)
+lines = [[PIPELINE_START, PIPELINE_END]]
+center = [
+    (PIPELINE_START[1] + PIPELINE_END[1]) / 2,
+    (PIPELINE_START[0] + PIPELINE_END[0]) / 2,
+]
+cache_key = "jaipur_pipeline_20261031"
+
+# Build a 5 km buffer around the actual pipeline in UTM 43N, then convert its
+# bounding rectangle to WGS84 for Leaflet's maxBounds.
+from shapely.geometry import LineString
+from shapely.ops import transform as shp_transform
+import pyproj
+_to_utm = pyproj.Transformer.from_crs("EPSG:4326", "EPSG:32643", always_xy=True).transform
+_to_wgs = pyproj.Transformer.from_crs("EPSG:32643", "EPSG:4326", always_xy=True).transform
+_pipeline_utm = shp_transform(_to_utm, LineString([PIPELINE_START, PIPELINE_END]))
+_view_area_utm = _pipeline_utm.buffer(5000)
+_view_area_wgs = shp_transform(_to_wgs, _view_area_utm)
+_min_lon, _min_lat, _max_lon, _max_lat = _view_area_wgs.bounds
+VIEW_BOUNDS = [[_min_lat, _min_lon], [_max_lat, _max_lon]]
 
 change_fc = load_change_cases(man.get("cases_geojson") if man else None)
 
@@ -268,14 +283,14 @@ with tab_map:
                          "bounds": ch["bounds"], "opacity": 0.8, "zindex": 4})
     m = P.build_map(data, cfg=cfg, basemap=basemap, visible_layers=chosen,
                     severities=severities, overlays=overlays,
-                    change_geojson=change_fc, center=center, zoom=15)
+                    change_geojson=change_fc, center=center, zoom=14, max_bounds=VIEW_BOUNDS)
     st_folium(m, use_container_width=True, height=640, returned_objects=[])
 
 # ── imagery & change tab: before / after + change table ──────────────────────────
 with tab_img:
     if not man or not man.get("change"):
-        st.info("Run `python prep.py` with your Cartosat bands and 5 Google Earth "
-                "Pro exports to populate imagery and change detection here.")
+        st.info("Run `python prep.py` with your Cartosat GeoTIFF and aligned historical imagery "
+                "to populate imagery and change detection here.")
     else:
         pair_opts = [f"{c['from']} → {c['to']}" for c in man["change"]]
         sel_pair = st.selectbox("Change pair", pair_opts, index=len(pair_opts) - 1)
@@ -288,7 +303,7 @@ with tab_img:
             st.caption(f"Before · {ch['from']}")
             ma = P.build_map(data, cfg=cfg, basemap=basemap, visible_layers=["corridor"],
                              overlays=[epoch_overlay(a, 1.0)] if a else [],
-                             center=center, zoom=15)
+                             center=center, zoom=14, max_bounds=VIEW_BOUNDS)
             st_folium(ma, use_container_width=True, height=440, returned_objects=[],
                       key="map_before")
         with col_b:
@@ -298,7 +313,7 @@ with tab_img:
                         "opacity": 0.8, "zindex": 5})
             mb = P.build_map(data, cfg=cfg, basemap=basemap, visible_layers=["corridor"],
                              overlays=ovb, change_geojson=change_fc,
-                             center=center, zoom=15)
+                             center=center, zoom=14, max_bounds=VIEW_BOUNDS)
             st_folium(mb, use_container_width=True, height=440, returned_objects=[],
                       key="map_after")
 
