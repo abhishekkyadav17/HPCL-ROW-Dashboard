@@ -1,5 +1,7 @@
 import json
 import os
+import html
+from datetime import date, timedelta
 
 import yaml
 from yaml.loader import SafeLoader
@@ -193,6 +195,32 @@ hr{border-color:var(--border);}
 .app-footer{display:flex;justify-content:space-between;align-items:center;
   padding:10px 4px;margin-top:4px;font-size:11px;color:var(--muted);
   border-top:1px solid var(--border);}
+
+.demo-strip{display:flex;align-items:flex-start;justify-content:space-between;gap:14px;
+  padding:11px 15px;margin:0 0 12px;border:1px solid rgba(56,189,248,.28);
+  border-radius:11px;background:linear-gradient(90deg,rgba(56,189,248,.09),rgba(56,189,248,.025));
+  color:var(--text);font-size:12px;line-height:1.5;}
+.demo-strip b{color:#a5e4ff;}
+.demo-tag{white-space:nowrap;border:1px solid rgba(56,189,248,.35);border-radius:999px;
+  color:#a5e4ff;padding:3px 9px;font-size:10px;font-weight:800;letter-spacing:.06em;}
+.freshness{color:var(--muted);font-size:10.5px;text-align:right;line-height:1.45;}
+.freshness strong{color:var(--text);}
+.section-lead{color:var(--muted);font-size:12px;margin-top:-7px;margin-bottom:12px;}
+.queue-note{padding:10px 13px;border:1px solid var(--border);background:var(--surface);
+  border-radius:10px;color:var(--muted);font-size:11.5px;line-height:1.5;margin:8px 0 12px;}
+.workflow-steps{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px;margin:10px 0 18px;}
+.workflow-step{padding:13px;border:1px solid var(--border);border-radius:11px;background:var(--surface);}
+.workflow-step .num{font-size:10px;color:var(--brand);font-weight:800;letter-spacing:.08em;}
+.workflow-step .name{font-size:13px;color:var(--strong);font-weight:700;margin:4px 0;}
+.workflow-step .desc{font-size:11px;color:var(--muted);line-height:1.45;}
+.integration-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px;margin-top:10px;}
+.integration-item{padding:13px;border:1px solid var(--border);border-radius:10px;background:var(--panel);}
+.integration-item b{display:block;color:var(--text);font-size:12px;margin-bottom:4px;}
+.integration-item span{color:var(--muted);font-size:11px;line-height:1.45;}
+.detail-actions{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin:12px 0;}
+.small-muted{font-size:10.5px;color:var(--muted);}
+@media(max-width:900px){.workflow-steps,.integration-grid{grid-template-columns:repeat(2,minmax(0,1fr));}}
+@media(max-width:600px){.workflow-steps,.integration-grid{grid-template-columns:1fr;}.demo-strip{flex-direction:column;}}
 </style>
 """,
     unsafe_allow_html=True,
@@ -377,7 +405,12 @@ def add_selected_basemaps(map_obj, show_google, show_satellite_image):
 
 # ── sidebar ─────────────────────────────────────────────────────────────────────
 with st.sidebar:
-    st.markdown(f"#### 🛰️ {BRAND}")
+    st.markdown(
+        f"""<div style="font-size:24px;font-weight:800;color:#f3f7fb;
+        letter-spacing:-0.5px;padding:8px 0 5px 0;white-space:nowrap;">
+        🛰️ {BRAND}</div>""",
+        unsafe_allow_html=True,
+    )
     st.caption(f"{OPERATOR} · {PIPELINE_NAME}")
     st.divider()
 
@@ -459,7 +492,7 @@ with st.sidebar:
     st.divider()
     st.caption(f"Signed in as **{st.session_state.get('name', 'user')}**")
     authenticator.logout(button_name="Log out", location="sidebar", key="logout_btn")
-    st.caption(f"{BRAND} v1.3 · build 2026.10.31")
+    st.caption(f"{BRAND} v1.4 · operator demo build")
 
 
 data = get_data(cache_key, row_margin, detect_buffer, lines)
@@ -528,61 +561,110 @@ for f in change_fc["features"]:
 all_rows = det_rows + chg_rows
 n_change = len(chg_rows)
 n_total = len(all_rows)
-n_crit = sum(1 for r in all_rows if r["Severity"] == "Critical")
-n_high = sum(1 for r in all_rows if r["Severity"] == "High")
-n_med = sum(1 for r in all_rows if r["Severity"] == "Medium")
+open_rows = [r for r in all_rows if r["Status"] != "Resolved"]
+n_open = len(open_rows)
+n_crit = sum(1 for r in open_rows if r["Severity"] == "Critical")
+n_high = sum(1 for r in open_rows if r["Severity"] == "High")
+n_med = sum(1 for r in open_rows if r["Severity"] == "Medium")
+n_low = sum(1 for r in open_rows if r["Severity"] == "Low")
+n_unassigned = sum(1 for r in open_rows if not str(r.get("Assigned To", "")).strip())
+n_change_open = sum(1 for r in open_rows if r["Source"] == "Imagery CD")
 avg_conf = round(sum(r["Confidence"] for r in all_rows) / n_total) if n_total else 0
 
-# ── top bar ──────────────────────────────────────────────────────────────────────
+# Imagery freshness is operationally important: a past-due pass should be visible
+# rather than presented as a live monitoring feed.
+scan_timestamp = pd.to_datetime(cfg.get("SCAN_DATE"), errors="coerce")
+scan_date = None if pd.isna(scan_timestamp) else scan_timestamp.date()
+if scan_date:
+    imagery_age_days = max((date.today() - scan_date).days, 0)
+    next_pass_due = scan_date + timedelta(days=SCAN_CADENCE_DAYS)
+    imagery_overdue = date.today() > next_pass_due
+    imagery_freshness = (
+        f"Refresh due · {imagery_age_days} days since pass"
+        if imagery_overdue
+        else f"Within cadence · {imagery_age_days} days since pass"
+    )
+    next_pass_label = next_pass_due.strftime("%d %b %Y")
+else:
+    imagery_age_days = None
+    imagery_overdue = False
+    imagery_freshness = "Pass date unavailable"
+    next_pass_label = "Not available"
+
+SEVERITY_RANK = {"Critical": 0, "High": 1, "Medium": 2, "Low": 3}
+STATUS_RANK = {"New": 0, "Acknowledged": 1, "Field dispatch": 2,
+               "Field Verification": 3, "Under review": 4, "Advisory": 5,
+               "Resolved": 6}
+
+def priority_sort_key(row):
+    return (SEVERITY_RANK.get(row.get("Severity"), 9),
+            STATUS_RANK.get(row.get("Status"), 9),
+            str(row.get("ID", "")))
+
+# ── product header + operating context ───────────────────────────────────────────
 corridor_range = f"CH 0+000 – {data['chainage_str'](data['L'])}"
+status_label = "IMAGERY REFRESH DUE" if imagery_overdue else "DEMO ENVIRONMENT"
 st.markdown(
     f"<div class='topbar'>"
     f"<div class='tb-left'><span class='mark'>🛰️ {BRAND}</span>"
     f"<span class='sub'>{SUBTITLE}</span></div>"
     f"<div class='tb-mid'>"
-    f"<div class='tb-field'><span class='k'>Operator</span><span class='v'>{OPERATOR}</span></div>"
-    f"<div class='tb-field'><span class='k'>Asset</span><span class='v'>{PIPELINE_NAME}</span></div>"
-    f"<div class='tb-field'><span class='k'>Product</span><span class='v'>{PRODUCT_LINE}</span></div>"
-    f"<div class='tb-field'><span class='k'>Segment</span><span class='v'>{corridor_range}</span></div>"
-    f"<div class='tb-field'><span class='k'>Last pass</span><span class='v'>{cfg['SCAN_DATE']}</span></div>"
-    f"<div class='tb-field'><span class='k'>Prior pass</span><span class='v'>{cfg['PREV_SCAN']}</span></div>"
-    f"<div class='tb-field'><span class='k'>Cadence</span><span class='v'>every {SCAN_CADENCE_DAYS} days</span></div>"
+    f"<div class='tb-field'><span class='k'>Operator</span><span class='v'>{html.escape(OPERATOR)}</span></div>"
+    f"<div class='tb-field'><span class='k'>Asset</span><span class='v'>{html.escape(PIPELINE_NAME)}</span></div>"
+    f"<div class='tb-field'><span class='k'>Product</span><span class='v'>{html.escape(PRODUCT_LINE)}</span></div>"
+    f"<div class='tb-field'><span class='k'>Monitored segment</span><span class='v'>{corridor_range}</span></div>"
+    f"<div class='tb-field'><span class='k'>Last imagery pass</span><span class='v'>{html.escape(str(cfg.get('SCAN_DATE', '—')))}</span></div>"
+    f"<div class='tb-field'><span class='k'>Cadence</span><span class='v'>Every {SCAN_CADENCE_DAYS} days</span></div>"
     f"</div>"
     f"<div class='tb-right'>"
-    f"<span class='live-pill'><span class='live-dot'></span>MONITORING ACTIVE</span>"
-    f"<span class='conf-badge'>Avg. detection confidence <b>{avg_conf}%</b></span>"
+    f"<span class='live-pill' style='color:#a5e4ff;background:rgba(56,189,248,.09);border-color:rgba(56,189,248,.3)'>{status_label}</span>"
+    f"<span class='conf-badge'>Average candidate confidence <b>{avg_conf}%</b></span>"
+    f"<span class='freshness'>Next pass due: <strong>{next_pass_label}</strong></span>"
     f"</div></div>",
     unsafe_allow_html=True,
 )
 
-# ── priority banner ──────────────────────────────────────────────────────────────
-n_open_crit_high = sum(
-    1
-    for r in all_rows
-    if r["Severity"] in ("Critical", "High") and r["Status"] == "New"
+st.markdown(
+    "<div class='demo-strip'>"
+    "<div><b>DEMONSTRATION WORKSPACE</b> · Sample candidate detections are shown to demonstrate the review and field-workflow experience. "
+    "They are not live operational alerts or confirmed encroachments. Validate every candidate in the field before taking operational action.</div>"
+    "<span class='demo-tag'>DEMO DATA</span></div>",
+    unsafe_allow_html=True,
 )
-if n_crit > 0:
-    top_crit = next((c for c in data["cases"] if c["sev"] == "Critical"), None)
-    tc_txt = (
-        f" Highest priority: <b>{top_crit['id']}</b> at {top_crit['ch']} km-post "
-        f"({top_crit['type']})."
-        if top_crit
-        else ""
-    )
+
+# A stale imagery pass is surfaced prominently instead of implying real-time coverage.
+if scan_date:
+    freshness_color = "#f5b013" if imagery_overdue else "#3ecf8e"
+    freshness_icon = "⏳" if imagery_overdue else "✓"
     st.markdown(
-        f"<div class='priority-banner'><span class='ic'>⚠️</span>"
-        f"<span class='txt'><b>{n_crit} Critical case(s)</b> require field verification "
-        f"within 24 hours per RoW encroachment SOP.{tc_txt}</span></div>",
-        unsafe_allow_html=True,
-    )
-elif n_open_crit_high == 0 and n_total > 0:
-    st.markdown(
-        "<div class='priority-ok'>✅ No unactioned Critical or High-severity cases — "
-        "corridor within normal monitoring parameters.</div>",
+        f"<div class='queue-note' style='border-left:3px solid {freshness_color}'>"
+        f"{freshness_icon} <b style='color:var(--text)'>Imagery freshness:</b> {html.escape(imagery_freshness)}. "
+        f"Scheduled cadence: {SCAN_CADENCE_DAYS} days · Next pass due: {next_pass_label}. "
+        "A production deployment should update this from the actual acquisition manifest.</div>",
         unsafe_allow_html=True,
     )
 
-# ── KPI cards ────────────────────────────────────────────────────────────────────
+# ── priority banner ──────────────────────────────────────────────────────────────
+priority_rows = sorted(open_rows, key=priority_sort_key)
+if n_crit > 0 or n_high > 0:
+    first_priority = priority_rows[0]
+    priority_text = (
+        f"<b>{n_crit} Critical</b> and <b>{n_high} High</b> open cases need review. "
+        f"First in queue: <b>{html.escape(first_priority['ID'])}</b> · "
+        f"{html.escape(str(first_priority['Type']))} · {html.escape(str(first_priority['Chainage']))}."
+    )
+    st.markdown(
+        f"<div class='priority-banner'><span class='ic'>⚠️</span>"
+        f"<span class='txt'>{priority_text} Use the Action centre to assign an owner and update the field workflow.</span></div>",
+        unsafe_allow_html=True,
+    )
+elif n_open == 0:
+    st.markdown(
+        "<div class='priority-ok'>✅ No open cases in the current demonstration dataset.</div>",
+        unsafe_allow_html=True,
+    )
+
+# ── operator KPIs: active items only; resolved items are excluded ────────────────
 def kpi(n, label, color, icon, sub=None):
     sub_html = f"<div class='d'>{sub}</div>" if sub else ""
     return (
@@ -593,24 +675,16 @@ def kpi(n, label, color, icon, sub=None):
         f"background:{color}'></span></div>"
     )
 
-
 st.markdown(
     "<div class='kpis'>"
-    + kpi(
-        n_total,
-        "Total open cases",
-        KPI["total"],
-        "📋",
-        f"{cnt['n_new']} new since prior pass",
-    )
-    + kpi(n_crit, "Critical", KPI["Critical"], "🔴", SEV_SLA_SHORT["Critical"])
-    + kpi(n_high, "High", KPI["High"], "🟠", SEV_SLA_SHORT["High"])
-    + kpi(n_med, "Medium", KPI["Medium"], "🟡", SEV_SLA_SHORT["Medium"])
-    + kpi(n_change, "Imagery change", KPI["change"], "🛰️", "vs. historical baseline")
+    + kpi(n_open, "Active cases", KPI["total"], "📋", f"{n_total - n_open} resolved")
+    + kpi(n_crit, "Critical open", KPI["Critical"], "🔴", SEV_SLA_SHORT["Critical"])
+    + kpi(n_high, "High open", KPI["High"], "🟠", SEV_SLA_SHORT["High"])
+    + kpi(n_unassigned, "Unassigned", "#f5b013", "👷", "Open cases without an owner")
+    + kpi(n_change_open, "Imagery changes", KPI["change"], "🛰️", "Open candidate change cases")
     + "</div>",
     unsafe_allow_html=True,
 )
-
 
 def epoch_overlay(entry, opacity, z=3):
     return {
@@ -622,12 +696,21 @@ def epoch_overlay(entry, opacity, z=3):
     }
 
 
-tab_map, tab_cases, tab_overview = st.tabs(
-    ["🗺  Corridor map", "📋  Case register", "📊  Overview"]
+tab_map, tab_action, tab_cases, tab_overview = st.tabs(
+    ["🗺  Corridor map", "⚠️  Action centre", "📋  Case register", "📊  Asset insights"]
 )
 
 # ── map tab ──────────────────────────────────────────────────────────────────────
 with tab_map:
+    st.markdown("#### Corridor monitoring view")
+    st.markdown(
+        f"<div class='section-lead'>{html.escape(PIPELINE_NAME)} · {corridor_range} · "
+        f"{round(data['L']):,} m monitored segment · RoW margin {cfg['ROW_MARGIN_M']} m · "
+        f"Monitoring band {cfg['DETECT_BUFFER_M']} m</div>",
+        unsafe_allow_html=True,
+    )
+    if not show_google and not show_satellite_image:
+        st.info("No basemap is selected. Detection overlays and the corridor geometry remain available.")
     map_center, map_zoom = center, 14
     if sel_ch != "(corridor overview)" and sel_ch in ch_pts:
         map_center, map_zoom = list(ch_pts[sel_ch]), jump_zoom
@@ -690,366 +773,399 @@ with tab_map:
         returned_objects=[],
         key=map_key,
     )
+    st.caption(
+        "Map layers show candidate locations within the configured monitoring corridor. "
+        "Use the Action centre to review severity, assign a field owner and record the outcome."
+    )
 
 
-# ── inspection-report export (plain HTML -- no new pip dependency) ───────────────
+# ── inspection-report export ─────────────────────────────────────────────────────
 def build_html_report(cfg, rows, operator, pipeline_name, corridor_range):
     sev_counts = {
-        s: sum(1 for r in rows if r["Severity"] == s)
-        for s in ("Critical", "High", "Medium", "Low")
+        severity: sum(1 for row in rows if row["Severity"] == severity)
+        for severity in ("Critical", "High", "Medium", "Low")
     }
+    ordered_rows = sorted(rows, key=priority_sort_key)
     trs = "".join(
-        f"<tr><td>{r['ID']}</td><td>{r['Type']}</td>"
-        f"<td style='color:{P.SEV_COL.get(r['Severity'], '#555')};font-weight:700'>"
-        f"{r['Severity']}</td>"
-        f"<td>{r['Confidence']}%</td><td>{r['Chainage']}</td><td>{r['SLA']}</td>"
-        f"<td>{r['Status']}</td></tr>"
-        for r in rows[:30]
+        f"<tr><td>{html.escape(str(row['ID']))}</td>"
+        f"<td>{html.escape(str(row['Type']))}</td>"
+        f"<td style='color:{P.SEV_COL.get(row['Severity'], '#555')};font-weight:700'>"
+        f"{html.escape(str(row['Severity']))}</td>"
+        f"<td>{row['Confidence']}%</td><td>{html.escape(str(row['Chainage']))}</td>"
+        f"<td>{html.escape(str(row['SLA']))}</td>"
+        f"<td>{html.escape(str(row['Status']))}</td>"
+        f"<td>{html.escape(str(row.get('Assigned To', '')))}</td>"
+        f"<td>{row.get('Lat', '')}, {row.get('Lon', '')}</td></tr>"
+        for row in ordered_rows[:50]
     )
+    generated = date.today().strftime("%d %b %Y")
     return f"""<!DOCTYPE html><html><head><meta charset="utf-8">
-<title>RoW Sentinel Inspection Report</title>
+<title>RoW Sentinel — Demonstration Inspection Report</title>
 <style>
-body{{font-family:Arial,Helvetica,sans-serif;color:#111;max-width:900px;margin:40px auto;padding:0 20px;}}
-h1{{margin-bottom:4px;}} .sub{{color:#555;margin-top:0;}}
-table{{border-collapse:collapse;width:100%;margin-top:16px;font-size:13px;}}
-th,td{{border:1px solid #ccc;padding:6px 8px;text-align:left;}}
-th{{background:#f0f0f0;}}
-.disclaimer{{color:#777;font-size:11px;margin-top:24px;font-style:italic;}}
+body{{font-family:Arial,Helvetica,sans-serif;color:#17212c;max-width:1100px;margin:36px auto;padding:0 22px;}}
+h1{{margin-bottom:4px;}} .sub{{color:#526273;margin-top:0;}}
+.banner{{padding:10px 12px;background:#eef7fb;border-left:4px solid #168ec0;font-size:12px;}}
+table{{border-collapse:collapse;width:100%;margin-top:16px;font-size:12px;}}
+th,td{{border:1px solid #ccd5de;padding:7px 8px;text-align:left;}}
+th{{background:#edf2f6;}}
+.disclaimer{{color:#657586;font-size:11px;margin-top:24px;font-style:italic;line-height:1.5;}}
 @media print{{body{{margin:0;}}}}
 </style></head><body>
 <h1>RoW Sentinel — Pipeline Inspection Report</h1>
-<p class="sub">{operator} · {pipeline_name} · {corridor_range}</p>
-<p class="sub">Satellite pass: {cfg['SCAN_DATE']} (previous: {cfg['PREV_SCAN']})</p>
-<h3>Summary</h3>
-<p>Total open cases: {len(rows)} &nbsp;|&nbsp;
-Critical: {sev_counts['Critical']} &nbsp; High: {sev_counts['High']} &nbsp;
-Medium: {sev_counts['Medium']} &nbsp; Low: {sev_counts['Low']}</p>
+<p class="sub">{html.escape(operator)} · {html.escape(pipeline_name)} · {html.escape(corridor_range)}</p>
+<p class="sub">Generated: {generated} · Current imagery pass: {html.escape(str(cfg.get('SCAN_DATE', '—')))} · Previous pass: {html.escape(str(cfg.get('PREV_SCAN', '—')))}</p>
+<div class="banner"><b>Demonstration report.</b> Records represent candidate detections for workflow evaluation and are not confirmed encroachments or live operational alerts.</div>
+<h3>Case summary</h3>
+<p>Active cases: {sum(1 for row in rows if row['Status'] != 'Resolved')} &nbsp;|&nbsp; Total candidates: {len(rows)} &nbsp;|&nbsp;
+Critical: {sev_counts['Critical']} &nbsp; High: {sev_counts['High']} &nbsp; Medium: {sev_counts['Medium']} &nbsp; Low: {sev_counts['Low']}</p>
 <p>RoW margin: {cfg['ROW_MARGIN_M']} m &nbsp; Monitoring band: {cfg['DETECT_BUFFER_M']} m</p>
-<h3>Case Register (top 30 by priority)</h3>
-<table><tr><th>ID</th><th>Type</th><th>Severity</th><th>Confidence</th>
-<th>Chainage</th><th>SLA</th><th>Status</th></tr>{trs}</table>
-<p class="disclaimer">Generated by RoW Sentinel. Satellite-derived detections are
-indicative and require field verification before any operational decision.
-Confidential — for internal evaluation only. Use your browser's Print →
-Save as PDF to export this report as a PDF.</p>
+<h3>Case register (priority order; first 50)</h3>
+<table><tr><th>ID</th><th>Type</th><th>Severity</th><th>Confidence</th><th>Chainage / extent</th><th>SLA</th><th>Status</th><th>Assigned to</th><th>Coordinates</th></tr>{trs}</table>
+<p class="disclaimer">Satellite-derived detections are indicative candidates. Field verification, review against the approved pipeline alignment and asset register, and compliance with the operator's operating procedures are required before any operational decision. Confidential — for internal evaluation only.</p>
 </body></html>"""
+
+
+def render_case_detail(case_id, detail_context="case", allow_workflow=True):
+    """Render one candidate case, including imagery-change records and workflow controls."""
+    row_match = next((item for item in all_rows if item["ID"] == case_id), None)
+    if row_match is None:
+        st.info("Select a case to view its details.")
+        return
+
+    row = dict(row_match)
+    row["Status"] = st.session_state.case_status.get(case_id, row.get("Status", "New"))
+    row["Assigned To"] = st.session_state.case_assignee.get(case_id, row.get("Assigned To", ""))
+    raw_case = case_lookup.get(case_id)
+    case_type = raw_case["type"] if raw_case else row["Type"]
+    category = categorize(str(case_type))
+    icon = CATEGORY_ICON.get(category, "🛰️" if row["Source"] == "Imagery CD" else "📍")
+    action = CATEGORY_ACTION.get(
+        category,
+        "Compare the candidate against the approved pipeline alignment and asset register; arrange field verification and record the outcome.",
+    )
+    severity = row["Severity"]
+    sla_full = SEV_SLA.get(severity, "Review under the operator's case-handling procedure")
+    extra = []
+
+    if raw_case:
+        if category == "vegetation":
+            veg_sorted = sorted(
+                [v for v in data["veg"] if v["level"] >= 2],
+                key=lambda v: (-v["level"], v["dist_m"]),
+            )[:4]
+            try:
+                idx = int(str(raw_case["id"]).split("-")[1]) - 1
+            except (IndexError, ValueError):
+                idx = -1
+            det = veg_sorted[idx] if 0 <= idx < len(veg_sorted) else {}
+            extra = [
+                ("NDVI signature", det.get("ndvi")),
+                ("Encroachment area", f"{det.get('area_m2')} m²" if det.get("area_m2") else None),
+                ("Distance to pipeline", f"{det.get('dist_m')} m" if det.get("dist_m") is not None else None),
+            ]
+        elif category == "water":
+            det = next((f for f in data["floods"] if f["id"] == case_id), {})
+            extra = [
+                ("Surface extent", f"{det.get('area_m2')} m²" if det.get("area_m2") else None),
+                ("SAR VV change", f"{det.get('vv_b')} → {det.get('vv_a')} dB" if det.get("vv_b") is not None else None),
+                ("NDWI", f"+{det.get('ndwi')}" if det.get("ndwi") is not None else None),
+                ("% inside RoW", f"{det.get('pct_rou')}%" if det.get("pct_rou") is not None else None),
+            ]
+        elif category == "excavation":
+            det = next((x for x in data["excs"] if x["id"] == case_id), {})
+            extra = [
+                ("Footprint area", f"{det.get('area_m2')} m²" if det.get("area_m2") else None),
+                ("Estimated depth", f"{det.get('depth_m')} m" if det.get("depth_m") is not None else None),
+                ("Estimated volume", f"{det.get('vol_m3'):,} m³" if det.get("vol_m3") else None),
+                ("% inside RoW", f"{det.get('pct_rou')}%" if det.get("pct_rou") is not None else None),
+            ]
+        elif category == "road":
+            det = data["road"]
+            extra = [
+                ("Length", f"{det.get('len')} m" if det.get("len") is not None else None),
+                ("Distance to pipeline", f"{det.get('dist')} m" if det.get("dist") is not None else None),
+                ("Crosses corridor", "Yes" if det.get("cross") else "No"),
+            ]
+        elif category == "structure":
+            det = next((item for item in data["structures"] if item["id"] == case_id), {})
+            extra = [
+                ("Structure type", det.get("type")),
+                ("Footprint area", f"{det.get('area_m2')} m²" if det.get("area_m2") else None),
+                ("Within RoW", "Yes" if det.get("in_rou") else "No"),
+                ("Within monitoring band", "Yes" if det.get("within") else "No"),
+            ]
+    else:
+        feature = next(
+            (feature for feature in change_fc.get("features", [])
+             if feature.get("properties", {}).get("id") == case_id),
+            None,
+        )
+        if feature:
+            props = feature["properties"]
+            extra = [
+                ("Comparison", f"{props.get('from', '—')} → {props.get('to', '—')}"),
+                ("Changed surface", f"{props.get('area_m2', '—')} m²"),
+                ("Review source", "Historical imagery comparison"),
+            ]
+        action = (
+            "Review the before/after imagery pair, compare the changed footprint with the approved RoW and asset register, "
+            "then request field verification if the change is relevant to pipeline integrity or access."
+        )
+
+    lat = row.get("Lat")
+    lon = row.get("Lon")
+    coord_text = f"{lat:.5f}, {lon:.5f}" if lat is not None and lon is not None else "Not available"
+    rows_html = "".join(
+        f"<div class='detail-row'><span>{html.escape(str(key))}</span><span>{html.escape(str(value))}</span></div>"
+        for key, value in extra if value is not None
+    )
+    sev_color = P.SEV_COL.get(severity, "#64748b")
+    st.markdown(
+        f"<div class='detail-card'>"
+        f"<div class='dh'><span style='font-size:20px'>{icon}</span>"
+        f"<span class='id'>{html.escape(str(case_id))}</span>"
+        f"<span class='sev-chip' style='background:{sev_color}'>{html.escape(str(severity))}</span></div>"
+        f"<div class='detail-row'><span>Detection type</span><span>{html.escape(str(case_type))}</span></div>"
+        f"<div class='detail-row'><span>Chainage / extent</span><span>{html.escape(str(row.get('Chainage', '—')))}</span></div>"
+        f"<div class='detail-row'><span>Candidate confidence</span><span>{row.get('Confidence', '—')}%</span></div>"
+        f"<div class='detail-row'><span>Coordinates</span><span>{coord_text}</span></div>"
+        f"<div class='detail-row'><span>Detection source</span><span>{html.escape(str(row.get('Source', '—')))}</span></div>"
+        f"{rows_html}"
+        f"<div class='action-box'><b>Suggested review action</b><br>{html.escape(action)}<br>"
+        f"<b>Response target:</b> {html.escape(sla_full)}</div></div>",
+        unsafe_allow_html=True,
+    )
+
+    action_cols = st.columns([1, 1, 1.4])
+    if lat is not None and lon is not None:
+        maps_url = f"https://www.google.com/maps/search/?api=1&query={lat},{lon}"
+        with action_cols[0]:
+            st.link_button("📍 Open location", maps_url, key=f"case_location_{detail_context}_{case_id}", use_container_width=True)
+    with action_cols[1]:
+        st.download_button(
+            "⬇ Case record CSV",
+            pd.DataFrame([row]).to_csv(index=False).encode("utf-8"),
+            file_name=f"{case_id}_case_record.csv",
+            mime="text/csv",
+            key=f"case_record_download_{detail_context}_{case_id}",
+            use_container_width=True,
+        )
+    with action_cols[2]:
+        st.caption(
+            "Update the review status and owner below."
+            if allow_workflow
+            else "To change status or owner, use the Action centre."
+        )
+
+    if allow_workflow:
+        st.markdown("**Field workflow**")
+        status_key = f"workflow_status_{detail_context}_{case_id}"
+        assignee_key = f"workflow_assignee_{detail_context}_{case_id}"
+        if status_key not in st.session_state:
+            current_status = st.session_state.case_status.get(case_id, row["Status"])
+            st.session_state[status_key] = current_status if current_status in STATUS_OPTIONS else "New"
+        if assignee_key not in st.session_state:
+            st.session_state[assignee_key] = st.session_state.case_assignee.get(case_id, "")
+        wf1, wf2, wf3 = st.columns([1.2, 1.2, 0.8])
+        with wf1:
+            chosen_status = st.selectbox("Status", STATUS_OPTIONS, key=status_key)
+        with wf2:
+            chosen_assignee = st.text_input("Assigned to", key=assignee_key, placeholder="Field team / owner")
+        with wf3:
+            st.markdown("<div style='height:27px'></div>", unsafe_allow_html=True)
+            if st.button("Save update", key=f"save_workflow_{detail_context}_{case_id}", use_container_width=True):
+                st.session_state.case_status[case_id] = chosen_status
+                st.session_state.case_assignee[case_id] = chosen_assignee.strip()
+                st.rerun()
+        st.caption("Workflow edits in this demo are held in the current browser session. Connect a shared database or work-order API for multi-user, persistent operations.")
+
+
+# ── action centre ────────────────────────────────────────────────────────────────
+with tab_action:
+    st.markdown("#### Action centre")
+    st.markdown(
+        "<div class='section-lead'>A prioritised worklist for review, assignment and field verification. "
+        "Critical and High items appear first.</div>",
+        unsafe_allow_html=True,
+    )
+    queue_rows = sorted([row for row in open_rows if row["Severity"] in severities], key=priority_sort_key)
+    q1, q2, q3 = st.columns(3)
+    q1.metric("Open work items", len(queue_rows))
+    q2.metric("Critical / High", sum(1 for row in queue_rows if row["Severity"] in ("Critical", "High")))
+    q3.metric("Awaiting assignment", sum(1 for row in queue_rows if not str(row.get("Assigned To", "")).strip()))
+    if queue_rows:
+        queue_df = pd.DataFrame(queue_rows)[
+            ["ID", "Type", "Severity", "Confidence", "Chainage", "SLA", "Status", "Assigned To"]
+        ]
+        st.dataframe(
+            queue_df,
+            width="stretch",
+            hide_index=True,
+            column_config={
+                "Confidence": st.column_config.ProgressColumn("Confidence", format="%d%%", min_value=0, max_value=100),
+                "Severity": st.column_config.TextColumn("Priority"),
+            },
+        )
+        st.markdown("**Review a work item**")
+        queue_ids = [row["ID"] for row in queue_rows]
+        selected_queue_id = st.selectbox("Select candidate", queue_ids, key="action_centre_case_select", label_visibility="collapsed")
+        render_case_detail(selected_queue_id, "action")
+    else:
+        st.success("No open work items match the current severity filters.")
+        st.caption("Resolved items remain available in the Case register when the Resolved status filter is enabled.")
 
 
 # ── case register ────────────────────────────────────────────────────────────────
 with tab_cases:
-    top_row = st.columns([2.2, 1])
-    with top_row[0]:
-        search = st.text_input(
-            "Search cases",
-            placeholder="Search by ID, type, or chainage…",
-            label_visibility="collapsed",
-        )
-    with top_row[1]:
-        st.caption(
-            f"{n_total} total · {n_change} from imagery change detection · "
-            f"avg. confidence {avg_conf}%"
-        )
+    st.markdown("#### Case register")
+    st.markdown(
+        "<div class='section-lead'>Search and filter candidate detections, inspect case details and export a structured register for review or hand-off. Update owners and statuses in the Action centre.</div>",
+        unsafe_allow_html=True,
+    )
+    filter_cols = st.columns([2.0, 1.25, 1.25])
+    with filter_cols[0]:
+        search = st.text_input("Search cases", placeholder="Search ID, type, chainage or assignee…", label_visibility="collapsed")
+    with filter_cols[1]:
+        register_statuses = st.multiselect("Workflow status", STATUS_OPTIONS, default=STATUS_OPTIONS, key="register_status_filter")
+    with filter_cols[2]:
+        source_filter = st.selectbox("Detection source", ["All sources", "Live scan", "Imagery CD"], key="register_source_filter")
 
-    rows = [r for r in all_rows if r["Severity"] in severities]
+    rows = [
+        dict(row, Status=st.session_state.case_status.get(row["ID"], row["Status"]),
+             **{"Assigned To": st.session_state.case_assignee.get(row["ID"], row.get("Assigned To", ""))})
+        for row in all_rows
+        if row["Severity"] in severities
+        and st.session_state.case_status.get(row["ID"], row["Status"]) in register_statuses
+        and (source_filter == "All sources" or row["Source"] == source_filter)
+    ]
     if search:
-        s = search.lower()
+        search_term = search.lower().strip()
         rows = [
-            r
-            for r in rows
-            if s in r["ID"].lower()
-            or s in r["Type"].lower()
-            or s in r["Chainage"].lower()
+            row for row in rows
+            if any(search_term in str(row.get(field, "")).lower()
+                   for field in ("ID", "Type", "Chainage", "Status", "Assigned To"))
         ]
+    rows = sorted(rows, key=priority_sort_key)
+    st.caption(f"Showing {len(rows)} of {n_total} candidate records · {n_open} currently active · {n_total - n_open} resolved")
 
-    df = pd.DataFrame(rows)
-    if not df.empty:
-        display_cols = [
-            "ID",
-            "Type",
-            "Severity",
-            "Confidence",
-            "Chainage",
-            "SLA",
-            "Status",
-            "Assigned To",
-            "Source",
-        ]
-        edited = st.data_editor(
+    if rows:
+        df = pd.DataFrame(rows)
+        display_cols = ["ID", "Type", "Severity", "Confidence", "Chainage", "SLA", "Status", "Assigned To", "Source"]
+        st.dataframe(
             df[display_cols],
             width="stretch",
             hide_index=True,
-            key="case_editor",
             column_config={
-                "Confidence": st.column_config.ProgressColumn(
-                    "Confidence", format="%d%%", min_value=0, max_value=100
-                ),
-                "Status": st.column_config.SelectboxColumn(
-                    "Status", options=STATUS_OPTIONS, required=True
-                ),
-                "Assigned To": st.column_config.TextColumn(
-                    "Assigned To", width="small"
-                ),
+                "Confidence": st.column_config.ProgressColumn("Confidence", format="%d%%", min_value=0, max_value=100),
+                "Severity": st.column_config.TextColumn("Priority"),
             },
-            disabled=[
-                "ID",
-                "Type",
-                "Severity",
-                "Confidence",
-                "Chainage",
-                "SLA",
-                "Source",
-            ],
         )
-        for _, row in edited.iterrows():
-            st.session_state.case_status[row["ID"]] = row["Status"]
-            st.session_state.case_assignee[row["ID"]] = row["Assigned To"]
-
+        export_df = df[[*display_cols, "Lat", "Lon"]]
         dl1, dl2 = st.columns(2)
         with dl1:
             st.download_button(
-                "⬇ Download case register (CSV)",
-                df.to_csv(index=False).encode(),
-                file_name="row_sentinel_cases.csv",
+                "⬇ Download filtered register (CSV)",
+                export_df.to_csv(index=False).encode("utf-8"),
+                file_name="row_sentinel_case_register.csv",
                 mime="text/csv",
+                use_container_width=True,
             )
         with dl2:
-            html_report = build_html_report(
-                cfg, rows, OPERATOR, PIPELINE_NAME, corridor_range
-            )
+            html_report = build_html_report(cfg, rows, OPERATOR, PIPELINE_NAME, corridor_range)
             st.download_button(
                 "📄 Download inspection report (HTML)",
-                html_report.encode(),
+                html_report.encode("utf-8"),
                 file_name="row_sentinel_inspection_report.html",
                 mime="text/html",
-                help=(
-                    "Opens in any browser; use Print → Save as PDF to export as PDF."
-                ),
+                help="Open in a browser and use Print → Save as PDF.",
+                use_container_width=True,
             )
+
+        st.divider()
+        st.markdown("**Case detail**")
+        detail_ids = [row["ID"] for row in rows]
+        selected_detail_id = st.selectbox("Select a case for full detail", detail_ids, key="register_detail_case_select", label_visibility="collapsed")
+        render_case_detail(selected_detail_id, "register", allow_workflow=False)
     else:
-        st.info("No cases match the current filters.")
-
-    st.markdown("---")
-    st.markdown("###### Case detail")
-    detail_opts = [r["ID"] for r in rows] if rows else ["— no cases match filters —"]
-    if st.session_state.get("case_detail_select") not in detail_opts:
-        st.session_state["case_detail_select"] = detail_opts[0]
-    sel_id = st.selectbox(
-        "Select a case for full detail",
-        detail_opts,
-        label_visibility="collapsed",
-        key="case_detail_select",
-    )
-    if rows:
-        sc = case_lookup.get(sel_id)
-        if sc:
-            cat = categorize(sc["type"])
-            icon = CATEGORY_ICON.get(cat, "📍")
-            action = CATEGORY_ACTION.get(
-                cat, "Verify in field and update case status."
-            )
-            sla_full = SEV_SLA.get(sc["sev"], "")
-
-            # Look up the richer underlying record for extra technical fields.
-            # pipeline.py doesn't attach these to the case dict directly, so we
-            # reproduce its own matching logic against the raw detection lists
-            # it already returns in data (veg / floods / excs / structures / road).
-            extra = []
-            if cat == "vegetation":
-                veg_sorted = sorted(
-                    [v for v in data["veg"] if v["level"] >= 2],
-                    key=lambda v: (-v["level"], v["dist_m"]),
-                )[:4]
-                idx = int(sc["id"].split("-")[1]) - 1
-                det = veg_sorted[idx] if 0 <= idx < len(veg_sorted) else {}
-                extra = [
-                    ("NDVI signature", det.get("ndvi")),
-                    (
-                        "Encroachment area",
-                        f"{det.get('area_m2')} m²" if det.get("area_m2") else None,
-                    ),
-                    (
-                        "Distance to pipeline",
-                        f"{det.get('dist_m')} m"
-                        if det.get("dist_m") is not None
-                        else None,
-                    ),
-                ]
-            elif cat == "water":
-                det = next(
-                    (f for f in data["floods"] if f["id"] == sc["id"]), {}
-                )
-                extra = [
-                    (
-                        "Surface extent",
-                        f"{det.get('area_m2')} m²" if det.get("area_m2") else None,
-                    ),
-                    (
-                        "SAR VV change",
-                        f"{det.get('vv_b')} → {det.get('vv_a')} dB"
-                        if det.get("vv_b") is not None
-                        else None,
-                    ),
-                    (
-                        "NDWI",
-                        f"+{det.get('ndwi')}"
-                        if det.get("ndwi") is not None
-                        else None,
-                    ),
-                    (
-                        "% inside RoW",
-                        f"{det.get('pct_rou')}%"
-                        if det.get("pct_rou") is not None
-                        else None,
-                    ),
-                ]
-            elif cat == "excavation":
-                det = next((x for x in data["excs"] if x["id"] == sc["id"]), {})
-                extra = [
-                    (
-                        "Footprint area",
-                        f"{det.get('area_m2')} m²" if det.get("area_m2") else None,
-                    ),
-                    (
-                        "Est. depth",
-                        f"{det.get('depth_m')} m"
-                        if det.get("depth_m") is not None
-                        else None,
-                    ),
-                    (
-                        "Est. volume",
-                        f"{det.get('vol_m3'):,} m³" if det.get("vol_m3") else None,
-                    ),
-                    (
-                        "% inside RoW",
-                        f"{det.get('pct_rou')}%"
-                        if det.get("pct_rou") is not None
-                        else None,
-                    ),
-                ]
-            elif cat == "road":
-                det = data["road"]
-                extra = [
-                    (
-                        "Length",
-                        f"{det.get('len')} m"
-                        if det.get("len") is not None
-                        else None,
-                    ),
-                    (
-                        "Distance to pipeline",
-                        f"{det.get('dist')} m"
-                        if det.get("dist") is not None
-                        else None,
-                    ),
-                    ("Crosses corridor", "Yes" if det.get("cross") else "No"),
-                ]
-            elif cat == "structure":
-                det = next(
-                    (s for s in data["structures"] if s["id"] == sc["id"]), {}
-                )
-                extra = [
-                    ("Structure type", det.get("type")),
-                    (
-                        "Footprint area",
-                        f"{det.get('area_m2')} m²" if det.get("area_m2") else None,
-                    ),
-                    ("Within RoW", "Yes" if det.get("in_rou") else "No"),
-                    (
-                        "Within monitoring band",
-                        "Yes" if det.get("within") else "No",
-                    ),
-                ]
-
-            rows_html = "".join(
-                f"<div class='detail-row'><span>{k}</span><span>{v}</span></div>"
-                for k, v in extra
-                if v is not None
-            )
-            st.markdown(
-                f"<div class='detail-card'>"
-                f"<div class='dh'><span style='font-size:20px'>{icon}</span>"
-                f"<span class='id'>{sc['id']}</span>"
-                f"<span class='sev-chip' style='background:{P.SEV_COL[sc['sev']]}'>{sc['sev']}</span>"
-                f"</div>"
-                f"<div class='detail-row'><span>Type</span><span>{sc['type']}</span></div>"
-                f"<div class='detail-row'><span>Chainage</span><span>{sc['ch']}</span></div>"
-                f"<div class='detail-row'><span>Confidence</span><span>{sc['conf']}%</span></div>"
-                f"<div class='detail-row'><span>Coordinates</span>"
-                f"<span>{sc['latlon'][0]:.5f}, {sc['latlon'][1]:.5f}</span></div>"
-                f"{rows_html}"
-                f"<div class='action-box'><b>Recommended action</b><br>{action}<br>"
-                f"<b>Response target:</b> {sla_full}</div>"
-                f"</div>",
-                unsafe_allow_html=True,
-            )
+        st.info("No cases match the selected filters. Clear the search or widen the workflow/source filters.")
 
 
-# ── overview ─────────────────────────────────────────────────────────────────────
+# ── asset insights + operating model ─────────────────────────────────────────────
 with tab_overview:
-    status_counts = pd.Series([r["Status"] for r in all_rows]).value_counts()
-    resolved_n = status_counts.get("Resolved", 0)
-    summary = (
-        f"As of the <b>{cfg['SCAN_DATE']}</b> satellite pass (previous pass "
-        f"<b>{cfg['PREV_SCAN']}</b>), the {round(data['L'])} m {PIPELINE_NAME} corridor "
-        f"shows <b>{n_total} open cases</b>. <b>{n_crit}</b> are classified Critical and "
-        f"require field verification within 24 hours; <b>{n_high}</b> are High priority "
-        f"(≤72 h). The largest category is "
-        f"<b>{pd.Series([r['Type'] for r in all_rows]).value_counts().idxmax() if all_rows else '—'}</b>. "
-        f"<b>{n_change}</b> candidate areas of surface change were identified from "
-        f"historical-imagery comparison against the Cartosat-2S baseline. "
-        f"{resolved_n} case(s) have been marked Resolved so far this cycle."
+    st.markdown("#### Asset insights")
+    st.markdown(
+        "<div class='section-lead'>A management view of the current corridor review set and the operational workflow around it.</div>",
+        unsafe_allow_html=True,
     )
-    st.markdown(f"<div class='exec-summary'>{summary}</div>", unsafe_allow_html=True)
+    status_counts = pd.Series([st.session_state.case_status.get(row["ID"], row["Status"]) for row in all_rows]).value_counts()
+    resolved_n = int(status_counts.get("Resolved", 0))
+    type_counts = pd.Series([row["Type"] for row in all_rows]).value_counts()
+    insight_cols = st.columns(4)
+    insight_cols[0].metric("Monitored segment", f"{round(data['L']):,} m")
+    insight_cols[1].metric("Candidate records", n_total)
+    insight_cols[2].metric("Resolved in session", resolved_n)
+    insight_cols[3].metric("Average confidence", f"{avg_conf}%")
 
     col1, col2 = st.columns(2)
     with col1:
-        st.markdown("###### Cases by severity")
+        st.markdown("**Open cases by severity**")
         st.bar_chart(
-            pd.DataFrame(
-                {
-                    "count": [
-                        n_crit,
-                        n_high,
-                        n_med,
-                        sum(1 for r in all_rows if r["Severity"] == "Low"),
-                    ]
-                },
-                index=["Critical", "High", "Medium", "Low"],
-            ),
+            pd.DataFrame({"Open cases": [n_crit, n_high, n_med, n_low]}, index=["Critical", "High", "Medium", "Low"]),
             color="#e5484d",
-            height=230,
+            height=245,
         )
     with col2:
-        st.markdown("###### Case register status")
+        st.markdown("**Workflow status**")
         if not status_counts.empty:
-            st.bar_chart(status_counts, color="#38bdf8", height=230)
+            st.bar_chart(status_counts, color="#38bdf8", height=245)
         else:
-            st.caption("No cases to summarize.")
+            st.caption("No workflow records to summarize.")
 
     col3, col4 = st.columns(2)
     with col3:
-        st.markdown("###### Cases by category")
-        cat_counts = pd.Series([r["Type"] for r in all_rows]).value_counts()
-        if not cat_counts.empty:
-            st.bar_chart(cat_counts, color="#a855f7", height=220)
+        st.markdown("**Candidate detections by type**")
+        if not type_counts.empty:
+            st.bar_chart(type_counts, color="#a855f7", height=230)
         else:
-            st.caption("No cases to summarize.")
+            st.caption("No candidate detections available.")
     with col4:
-        st.markdown("###### Change features per epoch pair")
+        st.markdown("**Imagery change candidates by comparison**")
         if man and man.get("change"):
-            cc = pd.DataFrame(
-                {"changes": [c["n"] for c in man["change"]]},
-                index=[f"{c['from']}→{c['to']}" for c in man["change"]],
+            change_counts = pd.DataFrame(
+                {"Candidate changes": [item["n"] for item in man["change"]]},
+                index=[f"{item['from']} → {item['to']}" for item in man["change"]],
             )
-            st.bar_chart(cc, color="#f0883e", height=220)
+            st.bar_chart(change_counts, color="#f0883e", height=230)
         else:
-            st.caption("Run prep.py to populate change detection.")
+            st.caption("No historical imagery comparison is available in the current manifest.")
 
+    st.divider()
+    st.markdown("**How the RoW Sentinel workflow fits an operator's review process**")
+    st.markdown(
+        "<div class='workflow-steps'>"
+        "<div class='workflow-step'><div class='num'>01 · DETECT</div><div class='name'>Compare imagery</div><div class='desc'>Review repeat satellite acquisitions and flag candidate surface changes along the monitored corridor.</div></div>"
+        "<div class='workflow-step'><div class='num'>02 · PRIORITISE</div><div class='name'>Triage by risk</div><div class='desc'>Use severity, confidence, proximity and response targets to focus attention on the most urgent items.</div></div>"
+        "<div class='workflow-step'><div class='num'>03 · VERIFY</div><div class='name'>Assign field action</div><div class='desc'>Route the case to a field owner, inspect the location and attach evidence in the operational system.</div></div>"
+        "<div class='workflow-step'><div class='num'>04 · CLOSE</div><div class='name'>Record the outcome</div><div class='desc'>Update status, retain the review trail and export a structured case register for follow-up.</div></div>"
+        "</div>",
+        unsafe_allow_html=True,
+    )
+
+    st.markdown("**Potential production integration points**")
+    st.caption("These are recommended integration points, not connected services in this demonstration build.")
+    st.markdown(
+        "<div class='integration-grid'>"
+        "<div class='integration-item'><b>Pipeline GIS and chainage register</b><span>Load the operator-approved centreline, RoW easement, valve locations, crossings and asset IDs for accurate chainage-based review.</span></div>"
+        "<div class='integration-item'><b>Field mobility / work orders</b><span>Push approved cases to the operator's work-order or field-inspection process and receive verification notes, photos and closure status.</span></div>"
+        "<div class='integration-item'><b>Enterprise data and alerts</b><span>Persist case history in a shared database and connect role-based access, audit logs, email/SMS alerts and reporting APIs.</span></div>"
+        "</div>",
+        unsafe_allow_html=True,
+    )
 
 # ── footer ───────────────────────────────────────────────────────────────────────
 st.markdown(
     f"<div class='app-footer'>"
-    f"<span>{BRAND} — powered by {ORG} · Cartosat-2S & historical satellite imagery</span>"
-    f"<span>Confidential — for internal evaluation only</span></div>",
+    f"<span>{BRAND} — {ORG} · Satellite imagery review and RoW case workflow</span>"
+    f"<span>Demonstration build · Candidate detections require field verification</span></div>",
     unsafe_allow_html=True,
 )
