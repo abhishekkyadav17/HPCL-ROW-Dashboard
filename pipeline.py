@@ -398,33 +398,50 @@ def build_map(data, cfg=None, basemap="Google Satellite", visible_layers=None,
 
     m = folium.Map(location=center or [data["clat"], data["clon"]],
                    zoom_start=zoom, tiles=None, control_scale=True, zoom_control=True,
-                   max_bounds=False,
-                   max_bounds_viscosity=1.0)
+                   max_bounds=False)
+
     if max_bounds:
         bounds_json = json.dumps(max_bounds)
-
-        # Apply the same geographic viewing limit to whichever basemap is active.
-        # inside=True makes the visible map viewport fit INSIDE max_bounds.
+        # Fit initial view to the permitted rectangle. The client-side guard below
+        # then keeps the ENTIRE Leaflet viewport inside that rectangle.
+        m.fit_bounds(max_bounds)
         m.get_root().script.add_child(Element(f"""
         (function() {{
             var map = {m.get_name()};
-            var allowedBounds = L.latLngBounds({bounds_json});
+            var allowed = L.latLngBounds({bounds_json});
+            var enforcing = false;
 
-            function enforceViewingLimit() {{
-                var minimumZoom = map.getBoundsZoom(allowedBounds, true);
-                map.setMinZoom(minimumZoom);
-                map.setMaxBounds(allowedBounds);
-                map.options.maxBoundsViscosity = 1.0;
+            function enforceAllowedViewport() {{
+                if (enforcing || !map || !map.getSize().x || !map.getSize().y) return;
+                enforcing = true;
 
-                if (map.getZoom() < minimumZoom) {{
-                    map.setZoom(minimumZoom, {{animate: false}});
+                // inside=true means the map viewport must fit within allowed.
+                var minZoom = map.getBoundsZoom(allowed, true);
+                if (isFinite(minZoom) && map.getZoom() < minZoom) {{
+                    map.setZoom(minZoom, {{animate: false}});
                 }}
-                map.panInsideBounds(allowedBounds, {{animate: false}});
+
+                // maxBounds limits dragging; panInsideBounds corrects any edge
+                // overshoot after drag, keyboard movement, or programmatic pan.
+                map.setMaxBounds(allowed);
+                map.options.maxBoundsViscosity = 1.0;
+                if (!allowed.contains(map.getBounds())) {{
+                    map.panInsideBounds(allowed, {{animate: false}});
+                }}
+
+                enforcing = false;
             }}
 
             map.whenReady(function() {{
-                enforceViewingLimit();
-                map.on('resize', enforceViewingLimit);
+                // Wait until the Streamlit iframe has its final dimensions.
+                window.setTimeout(function() {{
+                    map.invalidateSize({{animate: false}});
+                    enforceAllowedViewport();
+                    map.on('zoomend moveend dragend', enforceAllowedViewport);
+                    map.on('resize', function() {{
+                        window.setTimeout(enforceAllowedViewport, 0);
+                    }});
+                }}, 150);
             }});
         }})();
         """))
