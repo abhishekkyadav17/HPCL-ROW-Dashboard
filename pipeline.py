@@ -15,7 +15,7 @@ import random
 
 import folium
 from folium import Element, DivIcon
-from folium.plugins import Fullscreen, MiniMap, MeasureControl, MousePosition
+from folium.plugins import Fullscreen, MeasureControl, MousePosition
 from shapely.geometry import LineString, Point, Polygon
 from shapely.ops import substring, transform, unary_union, nearest_points
 import pyproj
@@ -400,11 +400,31 @@ def build_map(data, cfg=None, basemap="Google Satellite", visible_layers=None,
                    max_bounds=True if max_bounds else False,
                    max_bounds_viscosity=1.0)
     if max_bounds:
-        m.fit_bounds(max_bounds)
-        # Leaflet maxBounds prevents dragging the map outside the permitted
-        # rectangular viewport. Bounds are supplied as [[south, west], [north, east]].
-        m.options["maxBounds"] = max_bounds
-        m.options["maxBoundsViscosity"] = 1.0
+    import json
+
+    bounds_json = json.dumps(max_bounds)
+
+    m.fit_bounds(max_bounds)
+
+    m.options["maxBounds"] = max_bounds
+    m.options["maxBoundsViscosity"] = 1.0
+
+    # Dynamically prevent zooming out beyond the permitted viewing area
+    m.get_root().script.add_child(Element(f"""
+    (function() {{
+        var map = {m.get_name()};
+        var bounds = L.latLngBounds({bounds_json});
+
+        map.setMaxBounds(bounds);
+        map.options.maxBoundsViscosity = 1.0;
+
+        map.whenReady(function() {{
+            var minimumZoom = map.getBoundsZoom(bounds);
+            map.setMinZoom(minimumZoom);
+            map.fitBounds(bounds);
+        }});
+    }})();
+    """))
 
     # basemap (only the selected one is added)
     url, attr, subs, mx = BASEMAPS.get(basemap, BASEMAPS["Google Satellite"])
@@ -633,11 +653,6 @@ def build_map(data, cfg=None, basemap="Google Satellite", visible_layers=None,
     MeasureControl(position="topleft", primary_length_unit="meters",
                    primary_area_unit="sqmeters").add_to(m)
     MousePosition(position="bottomleft", prefix="Lat/Lon:", num_digits=5).add_to(m)
-    MiniMap(tile_layer=folium.TileLayer(
-        "https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png",
-        attr="CARTO", subdomains="abcd"),
-        position="bottomright", toggle_display=True, width=130, height=130,
-        zoom_level_offset=-5).add_to(m)
     m.get_root().html.add_child(Element(
         "<style>@keyframes vyPulse{0%{stroke-opacity:1;stroke-width:1;}"
         "50%{stroke-opacity:.2;stroke-width:6;}100%{stroke-opacity:1;stroke-width:1;}}"
